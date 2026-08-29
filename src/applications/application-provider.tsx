@@ -1,6 +1,12 @@
 "use client";
 
-import { createContext, ReactNode, useContext, useReducer } from "react";
+import {
+  createContext,
+  ReactNode,
+  useContext,
+  useEffect,
+  useReducer,
+} from "react";
 import {
   type AddApplicationInput,
   type ApplicationDetailsInput,
@@ -13,21 +19,31 @@ import {
   ApplicationChange,
   ApplicationStatus,
   initialApplications,
-  statusValue,
   STATUS_OPTIONS,
-} from "./data";
+  statusValue,
+} from "./application-data";
+import {
+  completeApplicationReview,
+  completeApplicationSchedule,
+  createApplication,
+  fetchApplications,
+  JobvisApiUnavailableError,
+  updateApplicationDetails as updateApiApplicationDetails,
+  updateApplicationMemo,
+  updateApplicationStatus,
+} from "./jobvis-api-client";
 
 type ApplicationContextValue = {
   applications: Application[];
-  addApplication: (input: AddApplicationInput) => string;
-  completeNextAction: (id: string) => void;
-  markReviewed: (id: string) => void;
-  saveMemo: (id: string, memo: string) => void;
+  addApplication: (input: AddApplicationInput) => Promise<string>;
+  completeNextAction: (id: string) => Promise<void>;
+  markReviewed: (id: string) => Promise<void>;
+  saveMemo: (id: string, memo: string) => Promise<void>;
   updateApplicationDetails: (
     id: string,
     details: ApplicationDetailsInput,
-  ) => void;
-  updateStatus: (id: string, status: ApplicationStatus) => void;
+  ) => Promise<void>;
+  updateStatus: (id: string, status: ApplicationStatus) => Promise<void>;
 };
 
 const ApplicationContext = createContext<ApplicationContextValue | null>(null);
@@ -59,41 +75,73 @@ function changes(
   }));
 }
 
+function logApiError(error: unknown) {
+  if (error instanceof JobvisApiUnavailableError) return;
+  console.error(error);
+}
+
 export function ApplicationProvider({ children }: { children: ReactNode }) {
   const [applications, dispatch] = useReducer(
     applicationReducer,
     initialApplications,
   );
 
-  function addApplication(input: AddApplicationInput) {
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchApplications(controller.signal)
+      .then((items) => dispatch({ type: "replace-all", applications: items }))
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+        logApiError(error);
+      });
+    return () => controller.abort();
+  }, []);
+
+  async function addApplication(input: AddApplicationInput) {
     const createdAt = new Date().toISOString();
-    const id = `application-${Date.now()}`;
-    dispatch({
-      type: "add",
-      application: createManualApplication(
-        input,
-        id,
-        createdAt,
-        activity(
-          "status",
-          "지원 이력을 추가했습니다",
-          "메일 원문 없이 직접 추가했습니다.",
+    try {
+      const application = await createApplication(input);
+      dispatch({ type: "add", application });
+      return application.id;
+    } catch (error) {
+      logApiError(error);
+      const id = `application-${Date.now()}`;
+      dispatch({
+        type: "add",
+        application: createManualApplication(
+          input,
+          id,
+          createdAt,
+          activity(
+            "status",
+            "지원 이력을 추가했습니다",
+            "메일 원문 없이 직접 추가했습니다.",
+          ),
         ),
-      ),
-    });
-    return id;
+      });
+      return id;
+    }
   }
 
-  function completeNextAction(id: string) {
+  async function completeNextAction(id: string) {
     const application = applications.find((item) => item.id === id);
     if (!application || application.nextActionCompleted) return;
+    try {
+      const updated = await completeApplicationSchedule(application);
+      dispatch({ type: "replace-one", application: updated });
+      return;
+    } catch (error) {
+      logApiError(error);
+    }
     dispatch({
       type: "complete-next-action",
       id,
       activity: activity(
         "task",
-        `${application.nextAction} 완료`,
-        "예정된 일정을 완료했습니다.",
+        "일정을 완료했습니다",
+        "예정된 지원 일정을 완료했습니다.",
       ),
       changes: changes([
         { title: "일정 상태", before: "미완료", after: "완료" },
@@ -101,9 +149,16 @@ export function ApplicationProvider({ children }: { children: ReactNode }) {
     });
   }
 
-  function markReviewed(id: string) {
+  async function markReviewed(id: string) {
     const application = applications.find((item) => item.id === id);
     if (!application?.needsReview) return;
+    try {
+      const updated = await completeApplicationReview(application);
+      dispatch({ type: "replace-one", application: updated });
+      return;
+    } catch (error) {
+      logApiError(error);
+    }
     dispatch({
       type: "mark-reviewed",
       id,
@@ -117,9 +172,16 @@ export function ApplicationProvider({ children }: { children: ReactNode }) {
     });
   }
 
-  function saveMemo(id: string, memo: string) {
+  async function saveMemo(id: string, memo: string) {
     const application = applications.find((item) => item.id === id);
     if (!application || application.memo === memo) return;
+    try {
+      const updated = await updateApplicationMemo(application, memo);
+      dispatch({ type: "replace-one", application: updated });
+      return;
+    } catch (error) {
+      logApiError(error);
+    }
     dispatch({
       type: "save-memo",
       id,
@@ -134,7 +196,7 @@ export function ApplicationProvider({ children }: { children: ReactNode }) {
     });
   }
 
-  function updateApplicationDetails(
+  async function updateApplicationDetails(
     id: string,
     details: ApplicationDetailsInput,
   ) {
@@ -162,6 +224,17 @@ export function ApplicationProvider({ children }: { children: ReactNode }) {
     );
     if (!changedFields.length) return;
 
+    try {
+      const updated = await updateApiApplicationDetails(
+        application,
+        normalizedDetails,
+      );
+      dispatch({ type: "replace-one", application: updated });
+      return;
+    } catch (error) {
+      logApiError(error);
+    }
+
     dispatch({
       type: "update-details",
       id,
@@ -176,9 +249,17 @@ export function ApplicationProvider({ children }: { children: ReactNode }) {
     });
   }
 
-  function updateStatus(id: string, status: ApplicationStatus) {
+  async function updateStatus(id: string, status: ApplicationStatus) {
     const application = applications.find((item) => item.id === id);
     if (!application || statusValue(application) === status) return;
+    try {
+      const updated = await updateApplicationStatus(application, status);
+      dispatch({ type: "replace-one", application: updated });
+      return;
+    } catch (error) {
+      logApiError(error);
+    }
+
     const previousLabel =
       STATUS_OPTIONS.find(
         (option) => option.value === statusValue(application),

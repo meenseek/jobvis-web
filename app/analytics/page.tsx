@@ -7,8 +7,10 @@ import {
   UserRoundCheck,
 } from "lucide-react";
 import { useMemo, useState } from "react";
-import { useApplications } from "../application-provider";
-import { seoulDateKey, stageRank } from "../data";
+import { useApplications } from "@/src/applications/application-provider";
+import { seoulDateKey, stageRank } from "@/src/applications/application-data";
+import { cn } from "@/src/ui/class-names";
+import styles from "./analytics.module.scss";
 
 const today = seoulDateKey();
 const [todayYear, todayMonth] = today.split("-").map(Number);
@@ -92,8 +94,16 @@ export default function AnalyticsPage() {
   );
 
   return (
-    <main id="main-content" className="main-content analytics-page">
-      <section className="page-heading analytics-heading">
+    <main
+      id="main-content"
+      className={cn("main-content", styles["analytics-page"])}
+    >
+      <section
+        className={cn(
+          "page-heading",
+          styles["analytics-heading"],
+        )}
+      >
         <div>
           <h1>지원 통계</h1>
           <p>지원 수와 단계별 전환율을 실제 지원 이력에서 계산합니다.</p>
@@ -103,7 +113,7 @@ export default function AnalyticsPage() {
           size="sm"
           value={range}
           onChange={(event) => setRange(event.target.value)}
-          wrapperClassName="analytics-range"
+          wrapperClassName={styles["analytics-range"]}
         >
           <option value="30">최근 30일</option>
           <option value="90">최근 90일</option>
@@ -111,7 +121,14 @@ export default function AnalyticsPage() {
         </Select>
       </section>
 
-      <section className="stat-grid" aria-label="지원 성과 요약">
+      <section
+        className={cn(
+          "stat-grid",
+          "summary-strip",
+          styles["summary-strip"],
+        )}
+        aria-label="지원 성과 요약"
+      >
         <article className="stat-card">
           <span className="stat-icon" aria-hidden="true">
             <BriefcaseBusiness />
@@ -144,15 +161,15 @@ export default function AnalyticsPage() {
         </article>
       </section>
 
-      <section className="analytics-grid">
+      <section className={styles["analytics-grid"]}>
         <article className="panel" key={`trend-${range}`}>
           <div className="panel-heading">
             <h2>월별 지원 흐름</h2>
             <span className="panel-count">총 {total}건</span>
           </div>
-          <figure className="analytics-trend-chart">
+          <figure className={styles["analytics-trend-chart"]}>
             <svg
-              className="analytics-trend-graphic"
+              className={styles["analytics-trend-graphic"]}
               viewBox="0 0 600 190"
               role="img"
               aria-label="최근 6개월 월별 지원 건수 추이"
@@ -172,7 +189,7 @@ export default function AnalyticsPage() {
               {[chartTop, (chartTop + chartBottom) / 2, chartBottom].map(
                 (y) => (
                   <line
-                    className="analytics-trend-grid"
+                    className={styles["analytics-trend-grid"]}
                     x1={chartLeft}
                     x2={chartRight}
                     y1={y}
@@ -182,41 +199,42 @@ export default function AnalyticsPage() {
                 ),
               )}
               <path
-                className="analytics-trend-area"
+                className={styles["analytics-trend-area"]}
                 d={trendAreaPath}
                 fill="url(#application-trend-fill)"
               />
               <path
-                className="analytics-trend-line"
+                className={styles["analytics-trend-line"]}
                 d={trendLinePath}
                 pathLength={1}
               />
               {chartPoints.map((point, index) => (
                 <g
-                  className={`analytics-trend-point${
-                    index === chartPoints.length - 1 ? " is-current" : ""
-                  }`}
+                  className={cn(
+                    styles["analytics-trend-point"],
+                    index === chartPoints.length - 1 && styles["is-current"],
+                  )}
                   style={{ animationDelay: `${480 + index * 90}ms` }}
                   key={monthOptions[index].key}
                 >
                   {index === chartPoints.length - 1 ? (
                     <circle
-                      className="analytics-trend-point-halo"
+                      className={styles["analytics-trend-point-halo"]}
                       cx={point.x}
                       cy={point.y}
-                      r="11"
+                      r="8"
                     />
                   ) : null}
                   <circle
-                    className="analytics-trend-point-core"
+                    className={styles["analytics-trend-point-core"]}
                     cx={point.x}
                     cy={point.y}
-                    r="5"
+                    r="3.5"
                   />
                 </g>
               ))}
             </svg>
-            <figcaption className="analytics-trend-labels">
+            <figcaption className={styles["analytics-trend-labels"]}>
               {chartPoints.map((point, index) => (
                 <span key={monthOptions[index].key}>
                   <strong>{point.count}건</strong>
@@ -231,19 +249,19 @@ export default function AnalyticsPage() {
           <div className="panel-heading">
             <h2>전형 단계 전환</h2>
           </div>
-          <div className="funnel-list">
+          <div className={styles["funnel-list"]}>
             {[
               ["전체 지원", total],
               ["서류 심사 통과", screened],
               ["면접 진입", interviewed],
               ["최종 합격", offered],
             ].map(([label, count], index) => (
-              <div className="funnel-row" key={label}>
+              <div className={styles["funnel-row"]} key={label}>
                 <span>
                   <strong>{label}</strong>
                   <small>{count}건</small>
                 </span>
-                <span className="funnel-track">
+                <span className={styles["funnel-track"]}>
                   <span
                     style={{ width: `${total ? (Number(count) / total) * 100 : 0}%` }}
                   />
@@ -259,18 +277,21 @@ export default function AnalyticsPage() {
         </article>
       </section>
 
-      <section className="panel source-panel" key={`sources-${range}`}>
+      <section
+        className={cn("panel", styles["source-panel"])}
+        key={`sources-${range}`}
+      >
         <div className="panel-heading">
           <h2>지원 이력 출처</h2>
         </div>
-        <div className="source-breakdown">
+        <div className={styles["source-breakdown"]}>
           {Object.entries(sourceCounts).map(([source, count]) => (
             <div key={source}>
               <span>
                 <strong>{source}</strong>
                 <small>{count}건</small>
               </span>
-              <span className="source-track">
+              <span className={styles["source-track"]}>
                 <span
                   style={{ width: `${total ? (count / total) * 100 : 0}%` }}
                 />

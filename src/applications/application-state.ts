@@ -2,13 +2,13 @@ import {
   seoulDateKey,
   statusValue,
   transitionStatus,
-} from "./data.ts";
+} from "./application-data.ts";
 import type {
   Application,
   ApplicationActivity,
   ApplicationChange,
   ApplicationStatus,
-} from "./data.ts";
+} from "./application-data.ts";
 
 export type AddApplicationInput = Pick<
   Application,
@@ -21,6 +21,8 @@ export type ApplicationDetailsInput = Pick<
 >;
 
 export type ApplicationAction =
+  | { type: "replace-all"; applications: Application[] }
+  | { type: "replace-one"; application: Application }
   | { type: "add"; application: Application }
   | {
       type: "complete-next-action";
@@ -57,6 +59,7 @@ export function createManualApplication(
 ): Application {
   return {
     id,
+    version: 0,
     company: input.company.trim(),
     position: input.position.trim(),
     location: "근무지 미입력",
@@ -68,7 +71,6 @@ export function createManualApplication(
     result: "active",
     needsReview: false,
     source: "직접 추가",
-    nextAction: "세부 정보 보완",
     scheduleType: "application",
     nextActionAt: seoulDateKey(createdAt),
     nextActionCompleted: false,
@@ -83,6 +85,16 @@ export function applicationReducer(
   applications: Application[],
   action: ApplicationAction,
 ): Application[] {
+  if (action.type === "replace-all") {
+    return action.applications;
+  }
+
+  if (action.type === "replace-one") {
+    return applications.map((application) =>
+      application.id === action.application.id ? action.application : application,
+    );
+  }
+
   if (action.type === "add") {
     return [action.application, ...applications];
   }

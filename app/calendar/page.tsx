@@ -1,18 +1,20 @@
 "use client";
 
-import { Button, Select, StatusIndicator } from "@measure-twice/react";
+import { Button, Select } from "@measure-twice/react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { useApplications } from "../application-provider";
+import { useApplications } from "@/src/applications/application-provider";
 import {
+  applicationDisplayStatusLabel,
+  applicationStatusBadgeTone,
   CalendarFilter,
   filterScheduledApplications,
   fullDate,
-  scheduleTypeLabel,
   seoulDateKey,
   SCHEDULE_TYPE_OPTIONS,
-  stageTone,
-} from "../data";
+} from "@/src/applications/application-data";
+import { cn } from "@/src/ui/class-names";
+import styles from "./calendar.module.scss";
 
 const weekdays = ["일", "월", "화", "수", "목", "금", "토"];
 const today = seoulDateKey();
@@ -72,7 +74,12 @@ export default function CalendarPage() {
 
   return (
     <main id="main-content" className="main-content">
-      <section className="page-heading calendar-heading">
+      <section
+        className={cn(
+          "page-heading",
+          styles["calendar-heading"],
+        )}
+      >
         <div>
           <h1>캘린더</h1>
           <p>지원·서류, 테스트, 면접, 회신 일정을 날짜별로 확인하세요.</p>
@@ -84,7 +91,7 @@ export default function CalendarPage() {
           onChange={(event) =>
             setFilter(event.target.value as CalendarFilter)
           }
-          wrapperClassName="calendar-filter"
+          wrapperClassName={styles["calendar-filter"]}
         >
           <option value="all">모든 일정</option>
           {SCHEDULE_TYPE_OPTIONS.map((option) => (
@@ -95,13 +102,13 @@ export default function CalendarPage() {
         </Select>
       </section>
 
-      <section className="calendar-layout">
-        <article className="panel calendar-panel">
-          <div className="calendar-toolbar">
+      <section className={styles["calendar-layout"]}>
+        <article className={styles["calendar-panel"]}>
+          <div className={styles["calendar-toolbar"]}>
             <h2>
               {visibleMonth.year}년 {visibleMonth.month + 1}월
             </h2>
-            <div className="calendar-actions">
+            <div className={styles["calendar-actions"]}>
               <Button
                 size="sm"
                 tone="neutral"
@@ -129,15 +136,23 @@ export default function CalendarPage() {
             </div>
           </div>
 
-          <div className="calendar-weekdays" aria-hidden="true">
+          <div className={styles["calendar-weekdays"]} aria-hidden="true">
             {weekdays.map((weekday) => (
               <span key={weekday}>{weekday}</span>
             ))}
           </div>
-          <div className="calendar-grid" aria-label="월간 일정">
+          <div className={styles["calendar-grid"]} aria-label="월간 일정">
             {days.map((day, index) => {
               if (!day) {
-                return <span className="calendar-day is-empty" key={index} />;
+                return (
+                  <span
+                    className={cn(
+                      styles["calendar-day"],
+                      styles["is-empty"],
+                    )}
+                    key={index}
+                  />
+                );
               }
               const key = dateKey(
                 visibleMonth.year,
@@ -149,13 +164,11 @@ export default function CalendarPage() {
               );
               return (
                 <button
-                  className={[
-                    "calendar-day",
-                    selectedDate === key ? "is-selected" : "",
-                    key === today ? "is-today" : "",
-                  ]
-                    .filter(Boolean)
-                    .join(" ")}
+                  className={cn(
+                    styles["calendar-day"],
+                    selectedDate === key && styles["is-selected"],
+                    key === today && styles["is-today"],
+                  )}
                   type="button"
                   onClick={() => setSelectedDate(key)}
                   aria-label={`${fullDate(key)}, 일정 ${dayEvents.length}개`}
@@ -164,7 +177,7 @@ export default function CalendarPage() {
                   key={key}
                 >
                   <span>{day}</span>
-                  <span className="calendar-day-events">
+                  <span className={styles["calendar-day-events"]}>
                     {dayEvents.slice(0, 2).map((application) => (
                       <span key={application.id}>{application.company}</span>
                     ))}
@@ -179,7 +192,7 @@ export default function CalendarPage() {
         </article>
 
         <aside
-          className="panel selected-date-panel"
+          className={cn("panel", styles["selected-date-panel"])}
           aria-labelledby="selected-date-heading"
         >
           <div className="panel-heading">
@@ -190,31 +203,47 @@ export default function CalendarPage() {
             >
               {fullDate(selectedDate)}
             </h2>
-            <span className="panel-count">{selectedEvents.length}개</span>
+            <span className="panel-count">
+              {selectedEvents.length}개
+            </span>
           </div>
-          <div className="selected-event-list">
+          <div className={styles["selected-event-list"]}>
             {selectedEvents.map((application) => (
               <Link
-                className="selected-event-card"
+                className={styles["selected-event-card"]}
                 href={`/applications/${application.id}`}
                 key={application.id}
               >
-                <span className="company-monogram" aria-hidden="true">
+                <span
+                  className="company-monogram"
+                  aria-hidden="true"
+                >
                   {application.company.slice(0, 1)}
                 </span>
                 <span>
-                  <strong>{application.nextAction}</strong>
-                  <small>
-                    {application.company} · {application.position}
-                  </small>
+                  <strong>{application.company}</strong>
+                  <small>{application.position}</small>
                 </span>
-                <StatusIndicator tone={stageTone(application)}>
-                  {scheduleTypeLabel(application.scheduleType)}
-                </StatusIndicator>
+                <span
+                  className={cn(
+                    "status-badge",
+                    styles["calendar-status-badge"],
+                    `status-badge--${applicationStatusBadgeTone(
+                      application,
+                    )}`,
+                  )}
+                >
+                  {applicationDisplayStatusLabel(application)}
+                </span>
               </Link>
             ))}
             {selectedEvents.length === 0 ? (
-              <div className="empty-state compact-empty">
+              <div
+                className={cn(
+                  "empty-state",
+                  "compact-empty",
+                )}
+              >
                 <strong>등록된 일정이 없습니다.</strong>
                 <p>다른 날짜를 선택하거나 일정 필터를 바꿔보세요.</p>
               </div>

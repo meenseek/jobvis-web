@@ -13,20 +13,23 @@ import { Pencil } from "lucide-react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { useState } from "react";
-import { safeApplicationListPath } from "../../application-navigation";
-import { useApplications } from "../../application-provider";
-import type { ApplicationDetailsInput } from "../../application-state";
+import { safeApplicationListPath } from "@/src/applications/application-navigation";
+import { useApplications } from "@/src/applications/application-provider";
+import type { ApplicationDetailsInput } from "@/src/applications/application-state";
 import {
+  applicationDisplayStatusLabel,
+  applicationStatusBadgeTone,
   ApplicationEmail,
   ApplicationStatus,
   compareOccurredAtDesc,
   fullDate,
   fullDateTime,
-  stageLabel,
-  stageTone,
+  scheduleTypeLabel,
   statusValue,
   STATUS_OPTIONS,
-} from "../../data";
+} from "@/src/applications/application-data";
+import { cn } from "@/src/ui/class-names";
+import styles from "@/src/applications/application-detail.module.scss";
 
 export default function ApplicationDetailPage() {
   const params = useParams<{ id: string }>();
@@ -52,10 +55,15 @@ export default function ApplicationDetailPage() {
   if (!application) {
     return (
       <main id="main-content" className="main-content">
-        <section className="panel not-found-panel">
+        <section
+          className={cn("panel", styles["not-found-panel"])}
+        >
           <h1>지원 이력을 찾을 수 없습니다.</h1>
           <p>삭제되었거나 올바르지 않은 주소입니다.</p>
-          <Link className="detail-link" href={returnPath}>
+          <Link
+            className={cn("detail-link", styles["not-found-link"])}
+            href={returnPath}
+          >
             지원 현황으로 돌아가기
           </Link>
         </section>
@@ -63,26 +71,26 @@ export default function ApplicationDetailPage() {
     );
   }
 
-  const memo = memoDrafts[application.id] ?? application.memo;
-  const sortedActivities = [...application.activities].sort(
+  const selectedApplication = application;
+  const memo = memoDrafts[selectedApplication.id] ?? selectedApplication.memo;
+  const sortedActivities = [...selectedApplication.activities].sort(
     compareOccurredAtDesc,
   );
-  const sortedChanges = [...(application.changes ?? [])].sort(
+  const sortedChanges = [...(selectedApplication.changes ?? [])].sort(
     compareOccurredAtDesc,
   );
 
   function handleMemoSave() {
-    if (!application) return;
-    saveMemo(application.id, memo.trim());
+    saveMemo(selectedApplication.id, memo.trim());
     setSaved(true);
   }
 
   function openDetailsEditor() {
     setDetailsDraft({
-      company: application.company,
-      position: application.position,
-      location: application.location,
-      employmentType: application.employmentType,
+      company: selectedApplication.company,
+      position: selectedApplication.position,
+      location: selectedApplication.location,
+      employmentType: selectedApplication.employmentType,
     });
     setEditDialogOpen(true);
   }
@@ -103,40 +111,47 @@ export default function ApplicationDetailPage() {
 
   function handleDetailsSave() {
     if (!detailsDraft?.company.trim() || !detailsDraft.position.trim()) return;
-    updateApplicationDetails(application.id, detailsDraft);
+    updateApplicationDetails(selectedApplication.id, detailsDraft);
     closeDetailsEditor();
   }
 
   return (
     <main id="main-content" className="main-content">
-      <section className="detail-heading">
+      <section className={styles["detail-heading"]}>
         <div>
           <Link className="back-link" href={returnPath}>
             ← 지원 현황
           </Link>
-          <h1>{application.company}</h1>
+          <h1>{selectedApplication.company}</h1>
           <p>
-            {application.position} · {application.location} ·{" "}
-            {application.employmentType}
+            {selectedApplication.position} · {selectedApplication.location} ·{" "}
+            {selectedApplication.employmentType}
           </p>
         </div>
-        <div className="detail-heading-actions">
+        <div className={styles["detail-heading-actions"]}>
           <button
-            className="detail-edit-button"
+            className={styles["detail-edit-button"]}
             type="button"
             onClick={openDetailsEditor}
           >
             <Pencil aria-hidden="true" />
             <span>기본 정보 편집</span>
           </button>
-          <StatusIndicator tone={stageTone(application)}>
-            {application.needsReview ? "확인 필요" : stageLabel(application)}
-          </StatusIndicator>
+          <span
+            className={cn(
+              "status-badge",
+              `status-badge--${applicationStatusBadgeTone(
+                selectedApplication,
+              )}`,
+            )}
+          >
+            {applicationDisplayStatusLabel(selectedApplication)}
+          </span>
         </div>
       </section>
 
-      {application.needsReview ? (
-        <section className="review-banner">
+      {selectedApplication.needsReview ? (
+        <section className={styles["review-banner"]}>
           <div>
             <strong>자동 분류 결과를 확인해 주세요.</strong>
             <p>
@@ -148,23 +163,23 @@ export default function ApplicationDetailPage() {
             size="sm"
             tone="neutral"
             variant="outline"
-            onClick={() => markReviewed(application.id)}
+            onClick={() => markReviewed(selectedApplication.id)}
           >
             확인 완료
           </Button>
         </section>
       ) : null}
 
-      <section className="detail-layout">
-        <div className="detail-main">
+      <section className={styles["detail-layout"]}>
+        <div className={styles["detail-main"]}>
           <article className="panel">
             <div className="panel-heading">
               <h2>지원 이력</h2>
             </div>
-            <ol className="timeline">
+            <ol className={styles.timeline}>
               {sortedActivities.map((item) => (
                 <li key={item.id}>
-                  <span className="timeline-mark" aria-hidden="true" />
+                  <span className={styles["timeline-mark"]} aria-hidden="true" />
                   <div>
                     <strong>{item.title}</strong>
                     <p>{item.description}</p>
@@ -178,17 +193,19 @@ export default function ApplicationDetailPage() {
           <article className="panel">
             <div className="panel-heading">
               <h2>관련 메일</h2>
-              <span className="panel-count">{application.emails.length}개</span>
+              <span className="panel-count">
+                {selectedApplication.emails.length}개
+              </span>
             </div>
-            <div className="email-list">
-              {application.emails.map((email) => (
+            <div className={styles["email-list"]}>
+              {selectedApplication.emails.map((email) => (
                 <button
-                  className="email-row"
+                  className={styles["email-row"]}
                   type="button"
                   onClick={() => setSelectedEmail(email)}
                   key={email.id}
                 >
-                  <span className="mail-icon" aria-hidden="true">
+                  <span className={styles["mail-icon"]} aria-hidden="true">
                     @
                   </span>
                   <span>
@@ -200,8 +217,13 @@ export default function ApplicationDetailPage() {
                   <span>메일 내용 보기</span>
                 </button>
               ))}
-              {application.emails.length === 0 ? (
-                <div className="empty-state compact-empty">
+              {selectedApplication.emails.length === 0 ? (
+                <div
+                  className={cn(
+                    "empty-state",
+                    "compact-empty",
+                  )}
+                >
                   <strong>연결된 메일이 없습니다.</strong>
                   <p>직접 추가한 지원 이력은 메일 없이 관리할 수 있습니다.</p>
                 </div>
@@ -217,13 +239,18 @@ export default function ApplicationDetailPage() {
                   변경 항목과 수정 전·후 값을 확인할 수 있습니다.
                 </p>
               </div>
-              <span className="panel-count">{sortedChanges.length}개</span>
+              <span className="panel-count">
+                {sortedChanges.length}개
+              </span>
             </div>
             {sortedChanges.length ? (
-              <div className="change-history-list">
+              <div className={styles["change-history-list"]}>
                 {sortedChanges.map((item) => (
-                  <div className="change-history-row" key={item.id}>
-                    <span className="change-history-mark" aria-hidden="true" />
+                  <div className={styles["change-history-row"]} key={item.id}>
+                    <span
+                      className={styles["change-history-mark"]}
+                      aria-hidden="true"
+                    />
                     <div>
                       <strong>{item.title}</strong>
                       <p>{item.description}</p>
@@ -233,7 +260,12 @@ export default function ApplicationDetailPage() {
                 ))}
               </div>
             ) : (
-              <div className="empty-state compact-empty">
+              <div
+                className={cn(
+                  "empty-state",
+                  "compact-empty",
+                )}
+              >
                 <strong>아직 변경 기록이 없습니다.</strong>
                 <p>기본 정보, 진행 상태 또는 메모를 수정하면 여기에 남습니다.</p>
               </div>
@@ -241,15 +273,17 @@ export default function ApplicationDetailPage() {
           </article>
         </div>
 
-        <aside className="detail-sidebar">
-          <article className="panel detail-control-card">
+        <aside className={styles["detail-sidebar"]}>
+          <article
+            className={cn("panel", styles["detail-control-card"])}
+          >
             <h2>진행 상태</h2>
             <Select
               label="진행 상태 변경"
-              value={statusValue(application)}
+              value={statusValue(selectedApplication)}
               onChange={(event) =>
                 updateStatus(
-                  application.id,
+                  selectedApplication.id,
                   event.target.value as ApplicationStatus,
                 )
               }
@@ -260,27 +294,27 @@ export default function ApplicationDetailPage() {
                 </option>
               ))}
             </Select>
-            <dl className="detail-definition-list">
+            <dl className={styles["detail-definition-list"]}>
               <div>
                 <dt>지원일</dt>
-                <dd>{fullDate(application.appliedAt)}</dd>
+                <dd>{fullDate(selectedApplication.appliedAt)}</dd>
               </div>
               <div>
-                <dt>다음 행동</dt>
-                <dd>{application.nextAction}</dd>
+                <dt>일정 종류</dt>
+                <dd>{scheduleTypeLabel(selectedApplication.scheduleType)}</dd>
               </div>
               <div>
                 <dt>예정일</dt>
-                <dd>{fullDate(application.nextActionAt)}</dd>
+                <dd>{fullDate(selectedApplication.nextActionAt)}</dd>
               </div>
               <div>
                 <dt>원문 출처</dt>
-                <dd>{application.source}</dd>
+                <dd>{selectedApplication.source}</dd>
               </div>
             </dl>
           </article>
 
-          <article className="panel memo-card">
+          <article className={cn("panel", styles["memo-card"])}>
             <h2>메모</h2>
             <Textarea
               label="지원 메모"
@@ -289,12 +323,12 @@ export default function ApplicationDetailPage() {
               onChange={(event) => {
                 setMemoDrafts((current) => ({
                   ...current,
-                  [application.id]: event.target.value,
+                  [selectedApplication.id]: event.target.value,
                 }));
                 setSaved(false);
               }}
             />
-            <div className="memo-actions">
+            <div className={styles["memo-actions"]}>
               {saved ? (
                 <StatusIndicator tone="success">저장됨</StatusIndicator>
               ) : (
@@ -387,7 +421,7 @@ export default function ApplicationDetailPage() {
           if (!open) setSelectedEmail(null);
         }}
       >
-        <div className="mail-preview">
+        <div className={styles["mail-preview"]}>
           <p>{selectedEmail?.summary}</p>
           <small>{fullDate(selectedEmail?.receivedAt ?? null)}</small>
         </div>

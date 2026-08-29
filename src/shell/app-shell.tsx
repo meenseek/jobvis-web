@@ -7,25 +7,31 @@ import {
   ChartNoAxesCombined,
   FileText,
   House,
+  LogOut,
   Settings2,
   X,
 } from "lucide-react";
 import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { FormEvent, ReactNode, useEffect, useState } from "react";
-import { useAccountSettings } from "./account-settings-provider";
+import { usePathname, useRouter } from "next/navigation";
+import { ReactNode, useEffect, useState } from "react";
+import { useAuth } from "../auth/auth-provider";
+import { useAccountSettings } from "../settings/account-settings-provider";
 import {
   applicationDetailPath,
-  applicationListPath,
   safeApplicationListPath,
-} from "./application-navigation";
-import { useApplications } from "./application-provider";
+} from "../applications/application-navigation";
+import { useApplications } from "../applications/application-provider";
 import {
   closeOpenApplicationTab,
   type OpenApplicationTab,
   upsertOpenApplicationTab,
-} from "./application-tabs";
-import { formatMailSyncTime } from "./settings-state";
+} from "../applications/application-tabs";
+import {
+  formatMailSyncTime,
+  mailProviderLabel,
+} from "../settings/settings-state";
+import { cn } from "../ui/class-names";
+import styles from "./shell.module.scss";
 
 const primaryNavItems = [
   { icon: House, label: "홈", href: "/", match: "home" },
@@ -58,18 +64,20 @@ const primaryNavItems = [
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const [searchQuery, setSearchQuery] = useState("");
+  const { signOut, user } = useAuth();
   const { applications } = useApplications();
   const { mailConnection } = useAccountSettings();
   const lastMailSyncTime = mailConnection
     ? formatMailSyncTime(mailConnection.lastSyncedAt)
     : null;
+  const mailProviderName = mailConnection
+    ? mailProviderLabel(mailConnection.provider)
+    : null;
   const currentApplication = applications.find(
     (application) => pathname === `/applications/${application.id}`,
   );
   const currentApplicationId = currentApplication?.id;
-  const currentReturnPath = safeApplicationListPath(searchParams.get("from"));
+  const [currentReturnPath, setCurrentReturnPath] = useState("/applications");
   const [openApplicationTabs, setOpenApplicationTabs] = useState<
     OpenApplicationTab[]
   >(() =>
@@ -81,6 +89,17 @@ export function AppShell({ children }: { children: ReactNode }) {
     const application = applications.find((item) => item.id === tab.id);
     return application ? [{ ...tab, application }] : [];
   });
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      setCurrentReturnPath(
+        safeApplicationListPath(
+          new URLSearchParams(window.location.search).get("from"),
+        ),
+      );
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [pathname]);
 
   useEffect(() => {
     if (!currentApplicationId) return;
@@ -101,12 +120,6 @@ export function AppShell({ children }: { children: ReactNode }) {
     return pathname.startsWith(`/${match}`);
   }
 
-  function submitSearch(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const query = searchQuery.trim();
-    router.push(applicationListPath(query, "all"));
-  }
-
   function closeApplicationTab(id: string) {
     const result = closeOpenApplicationTab(openApplicationTabs, id);
     setOpenApplicationTabs(result.tabs);
@@ -125,31 +138,38 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <>
       <SkipLink href="#main-content">본문으로 건너뛰기</SkipLink>
-      <div className="app-shell">
-        <aside className="sidebar">
-          <Link className="brand" href="/" aria-label="Jobvis 홈">
+      <div className={styles["app-shell"]}>
+        <aside className={styles.sidebar}>
+          <Link className={styles.brand} href="/" aria-label="Jobvis 홈">
             <span className="brand-mark" aria-hidden="true">
               J
             </span>
             <span>Jobvis</span>
           </Link>
 
-          <nav className="primary-nav" aria-label="주요 메뉴">
+          <nav className={styles["primary-nav"]} aria-label="주요 메뉴">
             {primaryNavItems.map((item) => {
               const NavIcon = item.icon;
               const active = isActive(item.match);
               const current = pathname === item.href;
               return (
                 <Link
-                  className={active ? "nav-item is-active" : "nav-item"}
+                  className={cn(
+                    styles["nav-item"],
+                    active && styles["is-active"],
+                  )}
                   href={item.href}
                   aria-current={current ? "page" : undefined}
                   key={item.label}
                 >
-                  <NavIcon className="nav-icon" aria-hidden="true" />
-                  <span className="nav-item-label">{item.label}</span>
+                  <NavIcon className={styles["nav-icon"]} aria-hidden="true" />
+                  <span className={styles["nav-item-label"]}>
+                    {item.label}
+                  </span>
                   {item.match === "applications" ? (
-                    <span className="nav-count">{applications.length}</span>
+                    <span className={styles["nav-count"]}>
+                      {applications.length}
+                    </span>
                   ) : null}
                 </Link>
               );
@@ -157,7 +177,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
             {openApplications.length ? (
               <div
-                className="open-detail-tabs"
+                className={styles["open-detail-tabs"]}
                 role="group"
                 aria-label="열린 지원 상세"
               >
@@ -165,15 +185,14 @@ export function AppShell({ children }: { children: ReactNode }) {
                   const active = currentApplicationId === application.id;
                   return (
                     <div
-                      className={
-                        active
-                          ? "open-detail-tab is-active"
-                          : "open-detail-tab"
-                      }
+                      className={cn(
+                        styles["open-detail-tab"],
+                        active && styles["is-active"],
+                      )}
                       key={application.id}
                     >
                       <Link
-                        className="open-detail-tab-link"
+                        className={styles["open-detail-tab-link"]}
                         href={applicationDetailPath(
                           application.id,
                           returnPath,
@@ -181,13 +200,16 @@ export function AppShell({ children }: { children: ReactNode }) {
                         aria-current={active ? "page" : undefined}
                         title={`${application.company} ${application.position}`}
                       >
-                        <FileText className="nav-icon" aria-hidden="true" />
-                        <span className="nav-item-label">
+                        <FileText
+                          className={styles["nav-icon"]}
+                          aria-hidden="true"
+                        />
+                        <span className={styles["nav-item-label"]}>
                           {application.company}
                         </span>
                       </Link>
                       <button
-                        className="open-detail-tab-close"
+                        className={styles["open-detail-tab-close"]}
                         type="button"
                         onClick={() => closeApplicationTab(application.id)}
                         aria-label={`${application.company} 지원 상세 닫기`}
@@ -202,18 +224,25 @@ export function AppShell({ children }: { children: ReactNode }) {
             ) : null}
           </nav>
 
-          <Link className="connection-card connection-card-link" href="/settings">
-            <div className="connection-heading">
+          <Link
+            className={cn(
+              styles["connection-card"],
+              styles["connection-card-link"],
+            )}
+            href="/settings"
+          >
+            <div className={styles["connection-heading"]}>
               <span
-                className={
-                  mailConnection
-                    ? "connection-dot"
-                    : "connection-dot is-pending"
-                }
+                className={cn(
+                  styles["connection-dot"],
+                  !mailConnection && styles["is-pending"],
+                )}
                 aria-hidden="true"
               />
               <strong>
-                {mailConnection ? "Gmail 연결됨" : "채용 메일 연결"}
+                {mailConnection
+                  ? `${mailProviderName} 연결됨`
+                  : "채용 메일 연결"}
               </strong>
             </div>
             <p>
@@ -223,36 +252,35 @@ export function AppShell({ children }: { children: ReactNode }) {
             </p>
           </Link>
 
-          <div className="profile-card profile-card-static">
-            <span className="avatar" aria-hidden="true">
-              J
+          <div
+            className={cn(
+              styles["profile-card"],
+              styles["profile-card-static"],
+            )}
+          >
+            <span className={styles.avatar} aria-hidden="true">
+              {user?.displayName.slice(0, 1) ?? "J"}
             </span>
             <span>
-              <strong>데모 사용자</strong>
-              <small>개인 계정</small>
+              <strong>{user?.displayName ?? "지원자님"}</strong>
+              <small>{user?.primaryEmail ?? "개인 계정"}</small>
             </span>
+            <button
+              className={styles["profile-logout-button"]}
+              type="button"
+              onClick={signOut}
+              aria-label="로그아웃"
+              title="로그아웃"
+            >
+              <LogOut aria-hidden="true" />
+            </button>
           </div>
         </aside>
 
-        <section className="workspace">
-          <header className="topbar">
-            <form className="global-search" onSubmit={submitSearch}>
-              <span aria-hidden="true">⌕</span>
-              <label className="visually-hidden" htmlFor="global-search-input">
-                회사 또는 포지션 검색
-              </label>
-              <input
-                id="global-search-input"
-                name="q"
-                type="search"
-                placeholder="회사 또는 포지션 검색"
-                value={searchQuery}
-                onChange={(event) => setSearchQuery(event.target.value)}
-              />
-              <button type="submit">검색</button>
-            </form>
-            <div className="topbar-actions">
-              <span className="sync-copy">
+        <section className={styles.workspace}>
+          <header className={styles.topbar}>
+            <div className={styles["topbar-actions"]}>
+              <span className={styles["sync-copy"]}>
                 {mailConnection
                   ? `마지막 동기화 ${lastMailSyncTime}`
                   : "채용 메일 연결 안 됨"}

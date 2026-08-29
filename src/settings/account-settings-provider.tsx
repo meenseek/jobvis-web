@@ -5,12 +5,14 @@ import {
   AccountSettingsState,
   accountSettingsReducer,
   initialAccountSettings,
+  MailProvider,
 } from "./settings-state";
 
 type AccountSettingsContextValue = AccountSettingsState & {
-  connectGmail: () => void;
+  connectMail: (provider: MailProvider, email: string) => void;
   disconnectMail: () => void;
-  syncGmail: () => void;
+  setAutoSyncEnabled: (enabled: boolean) => void;
+  syncMail: () => void;
 };
 
 const AccountSettingsContext =
@@ -22,29 +24,35 @@ export function AccountSettingsProvider({ children }: { children: ReactNode }) {
     initialAccountSettings,
   );
 
-  function connectGmail() {
+  function connectMail(provider: MailProvider, email: string) {
     dispatch({
-      type: "connect-gmail",
-      email: "career@jobvis.example",
+      type: "connect-mail",
+      provider,
+      email,
       occurredAt: new Date().toISOString(),
     });
   }
 
-  function syncGmail() {
-    dispatch({ type: "sync-gmail", occurredAt: new Date().toISOString() });
+  function syncMail() {
+    dispatch({ type: "sync-mail", occurredAt: new Date().toISOString() });
   }
 
   function disconnectMail() {
     dispatch({ type: "disconnect-mail" });
   }
 
+  function setAutoSyncEnabled(enabled: boolean) {
+    dispatch({ type: "set-auto-sync", enabled });
+  }
+
   return (
     <AccountSettingsContext.Provider
       value={{
         ...state,
-        connectGmail,
+        connectMail,
         disconnectMail,
-        syncGmail,
+        setAutoSyncEnabled,
+        syncMail,
       }}
     >
       {children}
