@@ -8,6 +8,18 @@ export type ApplicationResult = "active" | "offered" | "rejected";
 export type ApplicationStatus =
   | ApplicationStage
   | Exclude<ApplicationResult, "active">;
+export type ApplicationDisplayStatus =
+  | "review"
+  | "application"
+  | "test"
+  | "interview"
+  | "offer"
+  | "offered"
+  | "rejected";
+export type ApplicationProgressStatus = Exclude<
+  ApplicationDisplayStatus,
+  "review"
+>;
 export type ScheduleType =
   | "application"
   | "test"
@@ -40,6 +52,7 @@ export type ApplicationChange = {
 
 export type Application = {
   id: string;
+  version: number;
   company: string;
   position: string;
   location: string;
@@ -51,8 +64,8 @@ export type Application = {
   result: ApplicationResult;
   needsReview: boolean;
   source: string;
-  nextAction: string;
   scheduleType: ScheduleType;
+  nextActionTitle?: string | null;
   nextActionAt: string | null;
   nextActionCompleted: boolean;
   memo: string;
@@ -80,12 +93,33 @@ export const STATUS_OPTIONS: Array<{
   { value: "rejected", label: "전형 종료" },
 ];
 
+export const DISPLAY_STATUS_OPTIONS: Array<{
+  value: ApplicationDisplayStatus;
+  label: string;
+}> = [
+  { value: "review", label: "확인 필요" },
+  { value: "application", label: "지원·서류" },
+  { value: "test", label: "과제·테스트" },
+  { value: "interview", label: "면접 진행" },
+  { value: "offer", label: "처우 협의" },
+  { value: "offered", label: "최종 합격" },
+  { value: "rejected", label: "전형 종료" },
+];
+
+export const PROGRESS_STATUS_OPTIONS: Array<{
+  value: ApplicationProgressStatus;
+  label: string;
+}> = DISPLAY_STATUS_OPTIONS.filter(
+  (option): option is { value: ApplicationProgressStatus; label: string } =>
+    option.value !== "review",
+);
+
 export const SCHEDULE_TYPE_OPTIONS: Array<{
   value: ScheduleType;
   label: string;
 }> = [
   { value: "application", label: "지원·서류" },
-  { value: "test", label: "과제·코딩 테스트" },
+  { value: "test", label: "과제·테스트" },
   { value: "interview", label: "면접" },
   { value: "followup", label: "회신·결과 확인" },
   { value: "other", label: "기타" },
@@ -98,18 +132,24 @@ export function scheduleTypeLabel(scheduleType: ScheduleType) {
   );
 }
 
-export type ApplicationFilter = "all" | "review" | ApplicationStatus;
+export type ApplicationFilter = "all" | ApplicationDisplayStatus;
 
 export function normalizeApplicationFilter(
   candidate: string | null,
 ): ApplicationFilter {
-  if (candidate === "review") return "review";
   if (
     candidate &&
-    STATUS_OPTIONS.some((option) => option.value === candidate)
+    DISPLAY_STATUS_OPTIONS.some((option) => option.value === candidate)
   ) {
-    return candidate as ApplicationStatus;
+    return candidate as ApplicationDisplayStatus;
   }
+
+  if (candidate === "applied" || candidate === "screening") {
+    return "application";
+  }
+
+  if (candidate === "active") return "all";
+
   return "all";
 }
 
@@ -127,6 +167,94 @@ export function stageLabel(application: Application) {
     STAGE_OPTIONS.find((option) => option.value === application.stage)?.label ??
     "지원 완료"
   );
+}
+
+export function getApplicationDisplayStatus(
+  application: Pick<
+    Application,
+    "needsReview" | "result" | "stage" | "scheduleType"
+  >,
+): ApplicationDisplayStatus {
+  if (application.needsReview) return "review";
+  return getApplicationProgressStatus(application);
+}
+
+export function getApplicationProgressStatus(
+  application: Pick<Application, "result" | "stage" | "scheduleType">,
+): ApplicationProgressStatus {
+  if (application.result === "offered") return "offered";
+  if (application.result === "rejected") return "rejected";
+  if (application.stage === "offer") return "offer";
+  if (application.stage === "interview") return "interview";
+  if (application.scheduleType === "test") return "test";
+  return "application";
+}
+
+export function applicationDisplayStatusLabel(
+  application: Pick<
+    Application,
+    "needsReview" | "result" | "stage" | "scheduleType"
+  >,
+) {
+  const displayStatus = getApplicationDisplayStatus(application);
+  return (
+    DISPLAY_STATUS_OPTIONS.find((option) => option.value === displayStatus)
+      ?.label ?? "지원·서류"
+  );
+}
+
+export function applicationProgressStatusLabel(
+  application: Pick<Application, "result" | "stage" | "scheduleType">,
+) {
+  const displayStatus = getApplicationProgressStatus(application);
+  return (
+    DISPLAY_STATUS_OPTIONS.find((option) => option.value === displayStatus)
+      ?.label ?? "지원·서류"
+  );
+}
+
+export function applicationProgressStatusBadgeTone(
+  application: Pick<Application, "result" | "stage" | "scheduleType">,
+) {
+  return getApplicationProgressStatus(application);
+}
+
+export function progressStatusToApplicationStatus(
+  progressStatus: ApplicationProgressStatus,
+): ApplicationStatus {
+  if (progressStatus === "application" || progressStatus === "test") {
+    return "screening";
+  }
+  return progressStatus;
+}
+
+export function transitionProgressStatus(
+  application: Application,
+  progressStatus: ApplicationProgressStatus,
+): Application {
+  const transitioned = transitionStatus(
+    application,
+    progressStatusToApplicationStatus(progressStatus),
+  );
+
+  if (progressStatus === "test") {
+    return { ...transitioned, scheduleType: "test" };
+  }
+
+  if (progressStatus === "application" && transitioned.scheduleType === "test") {
+    return { ...transitioned, scheduleType: "application" };
+  }
+
+  return transitioned;
+}
+
+export function applicationStatusBadgeTone(application: {
+  stage: ApplicationStage;
+  result: ApplicationResult;
+  needsReview: boolean;
+  scheduleType: ScheduleType;
+}) {
+  return getApplicationDisplayStatus(application);
 }
 
 export function statusValue(application: Application): ApplicationStatus {
@@ -187,8 +315,7 @@ export function filterApplications(
         .includes(normalizedQuery);
     const matchesFilter =
       filter === "all" ||
-      (filter === "review" && application.needsReview) ||
-      filter === statusValue(application);
+      filter === getApplicationDisplayStatus(application);
     return matchesQuery && matchesFilter;
   });
 }
@@ -296,7 +423,7 @@ export function fullDate(isoDate: string | null) {
   return `${year}년 ${Number(month)}월 ${Number(day)}일`;
 }
 
-const demoApplications: Array<Omit<Application, "changes">> = [
+const demoApplications: Array<Omit<Application, "version" | "changes">> = [
   {
     id: "toss-payments",
     company: "토스페이먼츠",
@@ -310,7 +437,6 @@ const demoApplications: Array<Omit<Application, "changes">> = [
     result: "active",
     needsReview: true,
     source: "Gmail · 지원 접수 메일",
-    nextAction: "지원 서류 보완 마감",
     scheduleType: "application",
     nextActionAt: "2026-08-16",
     nextActionCompleted: false,
@@ -355,9 +481,8 @@ const demoApplications: Array<Omit<Application, "changes">> = [
     result: "active",
     needsReview: false,
     source: "Gmail · 코딩 테스트 안내",
-    nextAction: "코딩 테스트 제출",
     scheduleType: "test",
-    nextActionAt: "2026-08-18",
+    nextActionAt: "2026-08-16",
     nextActionCompleted: false,
     memo: "주문 트래픽 경험과 장애 대응 사례를 정리해 둘 것.",
     emails: [
@@ -382,7 +507,7 @@ const demoApplications: Array<Omit<Application, "changes">> = [
         id: "musinsa-activity-2",
         type: "email",
         title: "코딩 테스트 안내 메일을 가져왔습니다",
-        description: "제출 기한을 다음 행동으로 등록했습니다.",
+        description: "제출 기한을 일정으로 등록했습니다.",
         occurredAt: "2026-08-16T09:11:00+09:00",
       },
     ],
@@ -400,7 +525,6 @@ const demoApplications: Array<Omit<Application, "changes">> = [
     result: "active",
     needsReview: true,
     source: "Naver · 인터뷰 안내",
-    nextAction: "1차 인터뷰",
     scheduleType: "interview",
     nextActionAt: "2026-08-20",
     nextActionCompleted: false,
@@ -438,7 +562,6 @@ const demoApplications: Array<Omit<Application, "changes">> = [
     result: "active",
     needsReview: false,
     source: "직접 추가",
-    nextAction: "서류 결과 회신 확인",
     scheduleType: "followup",
     nextActionAt: "2026-08-22",
     nextActionCompleted: false,
@@ -467,7 +590,6 @@ const demoApplications: Array<Omit<Application, "changes">> = [
     result: "active",
     needsReview: false,
     source: "직접 추가",
-    nextAction: "포트폴리오 링크 점검",
     scheduleType: "other",
     nextActionAt: "2026-08-17",
     nextActionCompleted: false,
@@ -503,7 +625,6 @@ const demoApplications: Array<Omit<Application, "changes">> = [
     result: "rejected",
     needsReview: false,
     source: "Gmail · 최종 결과 안내",
-    nextAction: "결과 기록 완료",
     scheduleType: "other",
     nextActionAt: null,
     nextActionCompleted: true,
@@ -540,7 +661,6 @@ const demoApplications: Array<Omit<Application, "changes">> = [
     result: "active",
     needsReview: false,
     source: "Gmail · 서류 통과 안내",
-    nextAction: "2차 인터뷰",
     scheduleType: "interview",
     nextActionAt: "2026-08-19",
     nextActionCompleted: false,
@@ -577,7 +697,6 @@ const demoApplications: Array<Omit<Application, "changes">> = [
     result: "offered",
     needsReview: false,
     source: "Naver · 처우 안내",
-    nextAction: "오퍼 조건 회신",
     scheduleType: "followup",
     nextActionAt: "2026-08-21",
     nextActionCompleted: false,
@@ -614,7 +733,6 @@ const demoApplications: Array<Omit<Application, "changes">> = [
     result: "rejected",
     needsReview: false,
     source: "Gmail · 결과 안내",
-    nextAction: "결과 기록 완료",
     scheduleType: "other",
     nextActionAt: null,
     nextActionCompleted: true,
@@ -657,6 +775,7 @@ function shiftDemoTimestamp(timestamp: string) {
 export const initialApplications: Application[] = demoApplications.map(
   (application) => ({
     ...application,
+    version: 0,
     changes: [],
     appliedAt: shiftDemoDate(application.appliedAt),
     nextActionAt: application.nextActionAt

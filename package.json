@@ -5,39 +5,38 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "dev": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext dev",
-    "build": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext build",
-    "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
-    "test": "npm run build && node --test tests/rendered-html.test.mjs",
+    "dev": "next dev",
+    "dev:api": "JOBVIS_API_MODE=api NEXT_PUBLIC_JOBVIS_API_MODE=api next dev",
+    "dev:mock": "JOBVIS_API_MODE=mock NEXT_PUBLIC_JOBVIS_API_MODE=mock next dev",
+    "build": "next build",
+    "start": "next start",
+    "start:api": "JOBVIS_API_MODE=api NEXT_PUBLIC_JOBVIS_API_MODE=api next start",
+    "start:mock": "JOBVIS_API_MODE=mock NEXT_PUBLIC_JOBVIS_API_MODE=mock next start",
+    "test": "NEXT_PUBLIC_JOBVIS_AUTH_BYPASS=1 npm run build && NEXT_PUBLIC_JOBVIS_AUTH_BYPASS=1 node --test tests/rendered-html.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next"
   },
   "dependencies": {
     "@measure-twice/react": "^0.4.0",
     "lucide-react": "^1.31.0",
+    "next": "^16.3.2",
     "pretendard": "^1.3.9",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "1.52.1",
     "@eslint/js": "9.39.4",
     "@next/eslint-plugin-next": "16.2.6",
     "@types/node": "22.19.19",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
-    "@vitejs/plugin-react": "6.0.2",
-    "@vitejs/plugin-rsc": "0.5.34",
     "eslint": "9.39.4",
     "eslint-plugin-jsx-a11y": "6.10.2",
     "eslint-plugin-react": "7.37.5",
     "eslint-plugin-react-hooks": "7.1.1",
     "globals": "16.4.0",
-    "react-server-dom-webpack": "19.2.8",
+    "sass": "^1.103.1",
     "typescript": "5.9.3",
-    "typescript-eslint": "8.59.3",
-    "vinext": "1.0.0-beta.6",
-    "vite": "8.2.1",
-    "wrangler": "4.123.0"
+    "typescript-eslint": "8.59.3"
   },
   "type": "module"
 }

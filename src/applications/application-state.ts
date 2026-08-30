@@ -1,14 +1,18 @@
 import {
+  getApplicationProgressStatus,
   seoulDateKey,
   statusValue,
+  transitionProgressStatus,
   transitionStatus,
-} from "./data.ts";
+} from "./application-data.ts";
 import type {
   Application,
   ApplicationActivity,
   ApplicationChange,
+  ApplicationProgressStatus,
   ApplicationStatus,
-} from "./data.ts";
+  ScheduleType,
+} from "./application-data.ts";
 
 export type AddApplicationInput = Pick<
   Application,
@@ -17,10 +21,18 @@ export type AddApplicationInput = Pick<
 
 export type ApplicationDetailsInput = Pick<
   Application,
-  "company" | "position" | "location" | "employmentType"
+  "company" | "position" | "location" | "employmentType" | "appliedAt"
 >;
 
+export type ApplicationScheduleInput = {
+  nextActionAt: string | null;
+  nextActionTitle?: string | null;
+  scheduleType: ScheduleType;
+};
+
 export type ApplicationAction =
+  | { type: "replace-all"; applications: Application[] }
+  | { type: "replace-one"; application: Application }
   | { type: "add"; application: Application }
   | {
       type: "complete-next-action";
@@ -42,9 +54,29 @@ export type ApplicationAction =
       changes: ApplicationChange[];
     }
   | {
+      type: "save-schedule";
+      id: string;
+      schedule: ApplicationScheduleInput;
+      activity: ApplicationActivity;
+      changes: ApplicationChange[];
+    }
+  | {
+      type: "delete-activity";
+      id: string;
+      activityId: string;
+      changes: ApplicationChange[];
+    }
+  | {
       type: "update-status";
       id: string;
       status: ApplicationStatus;
+      activity: ApplicationActivity;
+      changes: ApplicationChange[];
+    }
+  | {
+      type: "update-progress-status";
+      id: string;
+      progressStatus: ApplicationProgressStatus;
       activity: ApplicationActivity;
       changes: ApplicationChange[];
     };
@@ -57,6 +89,7 @@ export function createManualApplication(
 ): Application {
   return {
     id,
+    version: 0,
     company: input.company.trim(),
     position: input.position.trim(),
     location: "근무지 미입력",
@@ -68,7 +101,6 @@ export function createManualApplication(
     result: "active",
     needsReview: false,
     source: "직접 추가",
-    nextAction: "세부 정보 보완",
     scheduleType: "application",
     nextActionAt: seoulDateKey(createdAt),
     nextActionCompleted: false,
@@ -83,6 +115,16 @@ export function applicationReducer(
   applications: Application[],
   action: ApplicationAction,
 ): Application[] {
+  if (action.type === "replace-all") {
+    return action.applications;
+  }
+
+  if (action.type === "replace-one") {
+    return applications.map((application) =>
+      application.id === action.application.id ? action.application : application,
+    );
+  }
+
   if (action.type === "add") {
     return [action.application, ...applications];
   }
@@ -125,10 +167,48 @@ export function applicationReducer(
           memo: action.memo,
           changes: [...action.changes, ...(application.changes ?? [])],
         };
+      case "save-schedule":
+        if (
+          application.nextActionAt === action.schedule.nextActionAt &&
+          (application.nextActionTitle ?? null) ===
+            (action.schedule.nextActionTitle ?? null) &&
+          application.scheduleType === action.schedule.scheduleType
+        ) {
+          return application;
+        }
+        return {
+          ...application,
+          nextActionAt: action.schedule.nextActionAt,
+          nextActionTitle: action.schedule.nextActionTitle,
+          nextActionCompleted: false,
+          scheduleType: action.schedule.scheduleType,
+          activities: [action.activity, ...application.activities],
+          changes: [...action.changes, ...(application.changes ?? [])],
+        };
+      case "delete-activity":
+        if (!application.activities.some((item) => item.id === action.activityId)) {
+          return application;
+        }
+        return {
+          ...application,
+          activities: application.activities.filter(
+            (item) => item.id !== action.activityId,
+          ),
+          changes: [...action.changes, ...(application.changes ?? [])],
+        };
       case "update-status":
         if (statusValue(application) === action.status) return application;
         return {
           ...transitionStatus(application, action.status),
+          activities: [action.activity, ...application.activities],
+          changes: [...action.changes, ...(application.changes ?? [])],
+        };
+      case "update-progress-status":
+        if (getApplicationProgressStatus(application) === action.progressStatus) {
+          return application;
+        }
+        return {
+          ...transitionProgressStatus(application, action.progressStatus),
           activities: [action.activity, ...application.activities],
           changes: [...action.changes, ...(application.changes ?? [])],
         };

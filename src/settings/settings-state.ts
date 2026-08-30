@@ -1,26 +1,30 @@
-export type LoginProvider = "google" | "kakao";
+export type MailProvider = "gmail" | "naver";
 
 export type MailConnection = {
-  provider: "gmail";
+  provider: MailProvider;
   email: string;
   lastSyncedAt: string;
 };
 
 export type AccountSettingsState = {
-  loginProvider: LoginProvider;
-  loginEmail: string;
   mailConnection: MailConnection | null;
+  autoSyncEnabled: boolean;
 };
 
 export type AccountSettingsAction =
-  | { type: "connect-gmail"; email: string; occurredAt: string }
-  | { type: "sync-gmail"; occurredAt: string }
+  | {
+      type: "connect-mail";
+      provider: MailProvider;
+      email: string;
+      occurredAt: string;
+    }
+  | { type: "sync-mail"; occurredAt: string }
+  | { type: "set-auto-sync"; enabled: boolean }
   | { type: "disconnect-mail" };
 
 export const initialAccountSettings: AccountSettingsState = {
-  loginProvider: "google",
-  loginEmail: "demo@jobvis.example",
   mailConnection: null,
+  autoSyncEnabled: true,
 };
 
 export function accountSettingsReducer(
@@ -28,16 +32,16 @@ export function accountSettingsReducer(
   action: AccountSettingsAction,
 ): AccountSettingsState {
   switch (action.type) {
-    case "connect-gmail":
+    case "connect-mail":
       return {
         ...state,
         mailConnection: {
-          provider: "gmail",
+          provider: action.provider,
           email: action.email,
           lastSyncedAt: action.occurredAt,
         },
       };
-    case "sync-gmail":
+    case "sync-mail":
       if (!state.mailConnection) return state;
       return {
         ...state,
@@ -46,13 +50,18 @@ export function accountSettingsReducer(
           lastSyncedAt: action.occurredAt,
         },
       };
+    case "set-auto-sync":
+      return {
+        ...state,
+        autoSyncEnabled: action.enabled,
+      };
     case "disconnect-mail":
       return { ...state, mailConnection: null };
   }
 }
 
-export function loginProviderLabel(provider: LoginProvider) {
-  return provider === "google" ? "Google" : "Kakao";
+export function mailProviderLabel(provider: MailProvider) {
+  return provider === "gmail" ? "Gmail" : "Naver";
 }
 
 export function formatMailSyncTime(isoDate: string) {

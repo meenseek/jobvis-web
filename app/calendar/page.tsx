@@ -1,18 +1,25 @@
 "use client";
 
-import { Button, Select, StatusIndicator } from "@measure-twice/react";
-import Link from "next/link";
-import { useMemo, useState } from "react";
-import { useApplications } from "../application-provider";
 import {
-  CalendarFilter,
+  Button,
+  Dialog,
+  DialogActions,
+  Select,
+  TextField,
+} from "@measure-twice/react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
+import Link from "next/link";
+import { FormEvent, useMemo, useState } from "react";
+import { useApplications } from "@/src/applications/application-provider";
+import {
+  applicationDisplayStatusLabel,
+  applicationStatusBadgeTone,
   filterScheduledApplications,
   fullDate,
-  scheduleTypeLabel,
   seoulDateKey,
-  SCHEDULE_TYPE_OPTIONS,
-  stageTone,
-} from "../data";
+} from "@/src/applications/application-data";
+import { cn } from "@/src/ui/class-names";
+import styles from "./calendar.module.scss";
 
 const weekdays = ["일", "월", "화", "수", "목", "금", "토"];
 const today = seoulDateKey();
@@ -23,13 +30,16 @@ function dateKey(year: number, monthIndex: number, day: number) {
 }
 
 export default function CalendarPage() {
-  const { applications } = useApplications();
+  const { applications, saveSchedule } = useApplications();
   const [visibleMonth, setVisibleMonth] = useState({
     year: todayYear,
     month: todayMonth - 1,
   });
   const [selectedDate, setSelectedDate] = useState(today);
-  const [filter, setFilter] = useState<CalendarFilter>("all");
+  const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false);
+  const [scheduleApplicationId, setScheduleApplicationId] = useState("");
+  const [scheduleTitle, setScheduleTitle] = useState("");
+  const [scheduleDate, setScheduleDate] = useState(selectedDate);
 
   const days = useMemo(() => {
     const firstWeekday = new Date(
@@ -48,9 +58,15 @@ export default function CalendarPage() {
     });
   }, [visibleMonth]);
 
-  const events = filterScheduledApplications(applications, filter);
+  const events = filterScheduledApplications(applications, "all");
   const selectedEvents = events.filter(
     (application) => application.nextActionAt === selectedDate,
+  );
+  const schedulableApplications = applications.filter(
+    (application) => application.result !== "rejected",
+  );
+  const selectedScheduleApplication = schedulableApplications.find(
+    (application) => application.id === scheduleApplicationId,
   );
 
   function moveMonth(offset: number) {
@@ -70,46 +86,68 @@ export default function CalendarPage() {
     setSelectedDate(today);
   }
 
+  function openScheduleDialog(date = selectedDate) {
+    const firstApplication = schedulableApplications[0];
+    setScheduleApplicationId(firstApplication?.id ?? "");
+    setScheduleTitle("");
+    setScheduleDate(date);
+    setScheduleDialogOpen(true);
+  }
+
+  function closeScheduleDialog() {
+    setScheduleDialogOpen(false);
+    setScheduleApplicationId("");
+    setScheduleTitle("");
+    setScheduleDate(selectedDate);
+  }
+
+  async function handleScheduleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedScheduleApplication) return;
+    await saveSchedule(selectedScheduleApplication.id, {
+      nextActionAt: scheduleDate,
+      nextActionTitle: scheduleTitle,
+      scheduleType: selectedScheduleApplication.scheduleType,
+    });
+    closeScheduleDialog();
+  }
+
   return (
     <main id="main-content" className="main-content">
-      <section className="page-heading calendar-heading">
+      <section
+        className={cn(
+          "page-heading",
+          styles["calendar-heading"],
+        )}
+      >
         <div>
           <h1>캘린더</h1>
           <p>지원·서류, 테스트, 면접, 회신 일정을 날짜별로 확인하세요.</p>
         </div>
-        <Select
-          label="일정 종류"
-          size="sm"
-          value={filter}
-          onChange={(event) =>
-            setFilter(event.target.value as CalendarFilter)
-          }
-          wrapperClassName="calendar-filter"
+        <Button
+          type="button"
+          onClick={() => openScheduleDialog(today)}
+          disabled={!schedulableApplications.length}
         >
-          <option value="all">모든 일정</option>
-          {SCHEDULE_TYPE_OPTIONS.map((option) => (
-            <option value={option.value} key={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </Select>
+          일정 등록
+        </Button>
       </section>
 
-      <section className="calendar-layout">
-        <article className="panel calendar-panel">
-          <div className="calendar-toolbar">
+      <div className={styles["calendar-layout"]}>
+        <article className={styles["calendar-panel"]}>
+          <div className={styles["calendar-toolbar"]}>
             <h2>
               {visibleMonth.year}년 {visibleMonth.month + 1}월
             </h2>
-            <div className="calendar-actions">
-              <Button
-                size="sm"
-                tone="neutral"
-                variant="outline"
+            <div className={styles["calendar-actions"]}>
+              <button
+                className={styles["calendar-icon-button"]}
+                type="button"
+                aria-label="이전 달"
                 onClick={() => moveMonth(-1)}
               >
-                이전 달
-              </Button>
+                <ChevronLeft aria-hidden="true" />
+              </button>
               <Button
                 size="sm"
                 tone="neutral"
@@ -118,26 +156,34 @@ export default function CalendarPage() {
               >
                 오늘
               </Button>
-              <Button
-                size="sm"
-                tone="neutral"
-                variant="outline"
+              <button
+                className={styles["calendar-icon-button"]}
+                type="button"
+                aria-label="다음 달"
                 onClick={() => moveMonth(1)}
               >
-                다음 달
-              </Button>
+                <ChevronRight aria-hidden="true" />
+              </button>
             </div>
           </div>
 
-          <div className="calendar-weekdays" aria-hidden="true">
+          <div className={styles["calendar-weekdays"]} aria-hidden="true">
             {weekdays.map((weekday) => (
               <span key={weekday}>{weekday}</span>
             ))}
           </div>
-          <div className="calendar-grid" aria-label="월간 일정">
+          <div className={styles["calendar-grid"]} aria-label="월간 일정">
             {days.map((day, index) => {
               if (!day) {
-                return <span className="calendar-day is-empty" key={index} />;
+                return (
+                  <span
+                    className={cn(
+                      styles["calendar-day"],
+                      styles["is-empty"],
+                    )}
+                    key={index}
+                  />
+                );
               }
               const key = dateKey(
                 visibleMonth.year,
@@ -149,13 +195,11 @@ export default function CalendarPage() {
               );
               return (
                 <button
-                  className={[
-                    "calendar-day",
-                    selectedDate === key ? "is-selected" : "",
-                    key === today ? "is-today" : "",
-                  ]
-                    .filter(Boolean)
-                    .join(" ")}
+                  className={cn(
+                    styles["calendar-day"],
+                    selectedDate === key && styles["is-selected"],
+                    key === today && styles["is-today"],
+                  )}
                   type="button"
                   onClick={() => setSelectedDate(key)}
                   aria-label={`${fullDate(key)}, 일정 ${dayEvents.length}개`}
@@ -164,7 +208,7 @@ export default function CalendarPage() {
                   key={key}
                 >
                   <span>{day}</span>
-                  <span className="calendar-day-events">
+                  <span className={styles["calendar-day-events"]}>
                     {dayEvents.slice(0, 2).map((application) => (
                       <span key={application.id}>{application.company}</span>
                     ))}
@@ -179,7 +223,7 @@ export default function CalendarPage() {
         </article>
 
         <aside
-          className="panel selected-date-panel"
+          className={cn("panel", styles["selected-date-panel"])}
           aria-labelledby="selected-date-heading"
         >
           <div className="panel-heading">
@@ -190,38 +234,126 @@ export default function CalendarPage() {
             >
               {fullDate(selectedDate)}
             </h2>
-            <span className="panel-count">{selectedEvents.length}개</span>
+            <div className={styles["selected-date-actions"]}>
+              <span className="panel-count">
+                {selectedEvents.length}개
+              </span>
+              <Button
+                type="button"
+                size="sm"
+                tone="neutral"
+                variant="ghost"
+                onClick={() => openScheduleDialog(selectedDate)}
+                disabled={!schedulableApplications.length}
+              >
+                일정 등록
+              </Button>
+            </div>
           </div>
-          <div className="selected-event-list">
+          <div className={styles["selected-event-list"]}>
             {selectedEvents.map((application) => (
               <Link
-                className="selected-event-card"
+                className={styles["selected-event-card"]}
                 href={`/applications/${application.id}`}
                 key={application.id}
               >
-                <span className="company-monogram" aria-hidden="true">
+                <span
+                  className="company-monogram"
+                  aria-hidden="true"
+                >
                   {application.company.slice(0, 1)}
                 </span>
                 <span>
-                  <strong>{application.nextAction}</strong>
+                  <strong>{application.company}</strong>
                   <small>
-                    {application.company} · {application.position}
+                    {application.nextActionTitle
+                      ? `${application.nextActionTitle} · ${application.position}`
+                      : application.position}
                   </small>
                 </span>
-                <StatusIndicator tone={stageTone(application)}>
-                  {scheduleTypeLabel(application.scheduleType)}
-                </StatusIndicator>
+                <span
+                  className={cn(
+                    "status-badge",
+                    styles["calendar-status-badge"],
+                    `status-badge--${applicationStatusBadgeTone(
+                      application,
+                    )}`,
+                  )}
+                >
+                  {applicationDisplayStatusLabel(application)}
+                </span>
               </Link>
             ))}
             {selectedEvents.length === 0 ? (
-              <div className="empty-state compact-empty">
+              <div
+                className={cn(
+                  "empty-state",
+                  "compact-empty",
+                )}
+              >
                 <strong>등록된 일정이 없습니다.</strong>
-                <p>다른 날짜를 선택하거나 일정 필터를 바꿔보세요.</p>
+                <p>다른 날짜를 선택하거나 새 일정을 등록해 보세요.</p>
               </div>
             ) : null}
           </div>
         </aside>
-      </section>
+      </div>
+
+      <Dialog
+        title="일정 등록"
+        description="일정을 연결할 지원건과 날짜를 선택하세요."
+        closeLabel="일정 등록 창 닫기"
+        open={scheduleDialogOpen}
+        onOpenChange={(open) => {
+          if (!open) closeScheduleDialog();
+        }}
+      >
+        <form className="application-form" onSubmit={handleScheduleSubmit}>
+          <Select
+            label="지원건"
+            value={scheduleApplicationId}
+            onChange={(event) => setScheduleApplicationId(event.target.value)}
+            required
+          >
+            {schedulableApplications.map((application) => (
+              <option value={application.id} key={application.id}>
+                {application.company} · {application.position}
+              </option>
+            ))}
+          </Select>
+          <TextField
+            label="일정 이름"
+            placeholder="예: 포트폴리오 점검, 1차 면접, 과제 제출"
+            value={scheduleTitle}
+            onChange={(event) => setScheduleTitle(event.target.value)}
+          />
+          <label className={styles["calendar-date-field"]}>
+            <span>일정 날짜</span>
+            <input
+              type="date"
+              value={scheduleDate}
+              onChange={(event) => setScheduleDate(event.target.value)}
+              required
+            />
+          </label>
+          <DialogActions>
+            <Button
+              type="button"
+              tone="neutral"
+              variant="ghost"
+              onClick={closeScheduleDialog}
+            >
+              취소
+            </Button>
+            <Button
+              type="submit"
+              disabled={!selectedScheduleApplication || !scheduleDate.trim()}
+            >
+              일정 저장
+            </Button>
+          </DialogActions>
+        </form>
+      </Dialog>
     </main>
   );
 }

@@ -1,0 +1,125 @@
+:root {
+  color-scheme: light;
+  --app-sidebar-width: 244px;
+  --app-topbar-height: 48px;
+  --app-content-max: 1320px;
+
+  --jv-color-white: #ffffff;
+  --jv-color-canvas: #ffffff;
+  --jv-color-sidebar: #f9f9f9;
+  --jv-color-hover: #f6f6f6;
+  --jv-color-selected: #f2f2f2;
+  --jv-color-selected-strong: #e8e8e8;
+  --jv-color-stroke: #e4e4e4;
+  --jv-color-stroke-strong: #cfcfcf;
+  --jv-color-input-border: #afafaf;
+  --jv-color-text: #111111;
+  --jv-color-text-muted: #727272;
+  --jv-color-text-subtle: #8a8a8a;
+  --jv-color-accent-bg: #f1f6f2;
+  --jv-color-accent-border: #d9e6dc;
+  --jv-color-accent-text: #2f4938;
+  --jv-color-accent-muted: #66786b;
+  --jv-color-accent-strong: #4f7b60;
+  --jv-color-priority-review: #b65f58;
+  --jv-color-priority-overdue: #9a5652;
+  --jv-color-shimmer-mid: #777777;
+  --jv-color-shimmer-light: #d4d4d4;
+  --jv-color-status-default-bg: #f3f3f3;
+  --jv-color-status-default-text: #5f5f5f;
+  --jv-color-status-screening-bg: #fbf4ec;
+  --jv-color-status-screening-text: #d28e3d;
+  --jv-color-status-interview-bg: #eef4fa;
+  --jv-color-status-interview-text: #4f78a8;
+  --jv-color-status-offered-bg: #f3faf6;
+  --jv-color-status-offered-text: #3f7a56;
+  --jv-color-status-review-bg: #fbefef;
+  --jv-color-status-review-border: #ead4d4;
+  --jv-color-status-review-text: #c65f5f;
+  --jv-color-status-rejected-bg: #f5f5f5;
+  --jv-color-status-rejected-text: #9a9a9a;
+  --jv-color-nav-hover: var(--jv-color-selected);
+  --jv-color-nav-selected: var(--jv-color-selected-strong);
+
+  --mt-color-bg-canvas: var(--jv-color-canvas);
+  --mt-color-bg-surface: var(--jv-color-white);
+  --mt-color-bg-subtle: var(--jv-color-hover);
+  --mt-color-bg-emphasis: var(--jv-color-text);
+  --mt-color-text: var(--jv-color-text);
+  --mt-color-text-muted: var(--jv-color-text-muted);
+  --mt-color-text-subtle: var(--jv-color-text-subtle);
+  --mt-color-text-inverse: var(--jv-color-white);
+  --mt-color-border: var(--jv-color-stroke);
+  --mt-color-border-strong: var(--jv-color-stroke-strong);
+  --mt-color-control-border: var(--jv-color-input-border);
+  --mt-color-control-border-hover: #8f8f8f;
+  --mt-color-control-placeholder: var(--mt-color-text-subtle);
+
+  --mt-color-action: #171717;
+  --mt-color-action-hover: #000000;
+  --mt-color-action-pressed: #2a2a2a;
+  --mt-color-action-soft: #f4f4f4;
+  --mt-color-action-soft-hover: #ececec;
+  --mt-color-action-soft-pressed: #dedede;
+  --mt-color-action-border: #171717;
+  --mt-color-action-text: #111111;
+  --mt-color-link: var(--mt-color-action);
+  --mt-color-link-hover: var(--mt-color-action-hover);
+  --mt-color-link-pressed: var(--mt-color-action-pressed);
+  --mt-color-link-visited: var(--mt-color-action-text);
+
+  --mt-color-neutral: #4a4a4a;
+  --mt-color-neutral-hover: #2f2f2f;
+  --mt-color-neutral-pressed: #171717;
+  --mt-color-neutral-soft: var(--jv-color-selected);
+  --mt-color-neutral-soft-hover: #e9e9e9;
+  --mt-color-neutral-soft-pressed: #dddddd;
+  --mt-color-neutral-border: #9a9a9a;
+  --mt-color-neutral-text: var(--jv-color-text);
+
+  --mt-color-focus: #6f6f6f;
+  --mt-color-feedback-info-bg: #f4f4f4;
+  --mt-color-feedback-info-border: #a3a3a3;
+  --mt-color-feedback-info-text: #3f3f3f;
+  --mt-color-feedback-success-bg: #eefbf4;
+  --mt-color-feedback-success-border: #24845d;
+  --mt-color-feedback-success-text: #166043;
+  --mt-color-feedback-warning-bg: #eeeeee;
+  --mt-color-feedback-warning-border: #cfcfcf;
+  --mt-color-feedback-warning-text: #111111;
+  --mt-color-feedback-danger-bg: #fff1f2;
+  --mt-color-feedback-danger-border: #c43c4a;
+  --mt-color-feedback-danger-text: #9f2534;
+  --mt-color-disabled-bg: #f2f2f2;
+  --mt-color-disabled-text: #8a8a8a;
+  --mt-color-loading-indicator: #727272;
+  --mt-shadow-sm: 0 1px 2px #1111110f;
+  --mt-shadow-md: 0 10px 24px #11111114;
+
+  --jv-font-size-9: 0.5625rem;
+  --jv-font-size-10: 0.625rem;
+  --jv-font-size-11: 0.6875rem;
+  --jv-font-size-12: 0.75rem;
+  --jv-font-size-13: 0.8125rem;
+
+  --mt-radius-xs: 2px;
+  --mt-radius-sm: 4px;
+  --mt-radius-md: 6px;
+  --mt-radius-lg: 8px;
+  --mt-radius-xl: 10px;
+  --mt-radius-control: var(--mt-radius-sm);
+  --mt-radius-surface: var(--mt-radius-lg);
+  --mt-radius-overlay: var(--mt-radius-xl);
+}
+
+@media (max-width: 1040px) {
+  :root {
+    --app-sidebar-width: 204px;
+  }
+}
+
+@media (max-width: 760px) {
+  :root {
+    --app-sidebar-width: 0px;
+  }
+}

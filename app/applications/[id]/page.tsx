@@ -7,39 +7,66 @@ import {
   Select,
   StatusIndicator,
   TextField,
-  Textarea,
 } from "@measure-twice/react";
-import { Pencil } from "lucide-react";
+import { ChevronDown, Mail, Pencil, Plus, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
-import { useState } from "react";
-import { safeApplicationListPath } from "../../application-navigation";
-import { useApplications } from "../../application-provider";
-import type { ApplicationDetailsInput } from "../../application-state";
+import { useEffect, useState } from "react";
+import { safeApplicationListPath } from "@/src/applications/application-navigation";
+import { useApplications } from "@/src/applications/application-provider";
+import type { ApplicationDetailsInput } from "@/src/applications/application-state";
+import { CalloutBanner } from "@/src/ui/callout-banner";
 import {
   ApplicationEmail,
-  ApplicationStatus,
+  ApplicationProgressStatus,
   compareOccurredAtDesc,
   fullDate,
   fullDateTime,
-  stageLabel,
-  stageTone,
-  statusValue,
-  STATUS_OPTIONS,
-} from "../../data";
+  getApplicationProgressStatus,
+  PROGRESS_STATUS_OPTIONS,
+} from "@/src/applications/application-data";
+import { cn } from "@/src/ui/class-names";
+import styles from "@/src/applications/application-detail.module.scss";
+
+function splitMemoBlocks(memo: string): string[] {
+  return memo
+    .split(/\n{2,}/)
+    .map((block) => block.trim())
+    .filter(Boolean);
+}
+
+function joinMemoBlocks(blocks: string[]): string {
+  return blocks
+    .map((block) => block.trim())
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function memoPreview(block: string, index: number): string {
+  return (
+    block
+      .split("\n")
+      .map((line) => line.trim())
+      .find(Boolean) ?? `새 메모 ${index + 1}`
+  );
+}
 
 export default function ApplicationDetailPage() {
   const params = useParams<{ id: string }>();
   const searchParams = useSearchParams();
   const {
     applications,
+    deleteActivity,
     markReviewed,
     saveMemo,
     updateApplicationDetails,
-    updateStatus,
+    updateProgressStatus,
   } = useApplications();
   const application = applications.find((item) => item.id === params.id);
-  const [memoDrafts, setMemoDrafts] = useState<Record<string, string>>({});
+  const [memoDrafts, setMemoDrafts] = useState<Record<string, string[]>>({});
+  const [openMemoDrafts, setOpenMemoDrafts] = useState<
+    Record<string, number | null>
+  >({});
   const [saved, setSaved] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [detailsDraft, setDetailsDraft] =
@@ -49,13 +76,24 @@ export default function ApplicationDetailPage() {
   const requestedReturnPath = searchParams.get("from");
   const returnPath = safeApplicationListPath(requestedReturnPath);
 
+  useEffect(() => {
+    if (!saved) return;
+    const timer = window.setTimeout(() => setSaved(false), 1800);
+    return () => window.clearTimeout(timer);
+  }, [saved]);
+
   if (!application) {
     return (
       <main id="main-content" className="main-content">
-        <section className="panel not-found-panel">
+        <section
+          className={cn("panel", styles["not-found-panel"])}
+        >
           <h1>지원 이력을 찾을 수 없습니다.</h1>
           <p>삭제되었거나 올바르지 않은 주소입니다.</p>
-          <Link className="detail-link" href={returnPath}>
+          <Link
+            className={cn("detail-link", styles["not-found-link"])}
+            href={returnPath}
+          >
             지원 현황으로 돌아가기
           </Link>
         </section>
@@ -63,26 +101,60 @@ export default function ApplicationDetailPage() {
     );
   }
 
-  const memo = memoDrafts[application.id] ?? application.memo;
-  const sortedActivities = [...application.activities].sort(
+  const selectedApplication = application;
+  const memoBlocks =
+    memoDrafts[selectedApplication.id] ??
+    splitMemoBlocks(selectedApplication.memo);
+  const memo = joinMemoBlocks(memoBlocks);
+  const isMemoDirty = memo.trim() !== selectedApplication.memo.trim();
+  const openMemoIndex = openMemoDrafts[selectedApplication.id] ?? null;
+  const sortedActivities = [...selectedApplication.activities].sort(
     compareOccurredAtDesc,
   );
-  const sortedChanges = [...(application.changes ?? [])].sort(
+  const sortedChanges = [...(selectedApplication.changes ?? [])].sort(
     compareOccurredAtDesc,
   );
 
-  function handleMemoSave() {
-    if (!application) return;
-    saveMemo(application.id, memo.trim());
+  async function handleMemoSave() {
+    if (!isMemoDirty) return;
+    await saveMemo(selectedApplication.id, memo.trim());
     setSaved(true);
+  }
+
+  function updateMemoBlocks(updater: (blocks: string[]) => string[]) {
+    setMemoDrafts((current) => {
+      const nextBlocks = updater(
+        current[selectedApplication.id] ??
+          splitMemoBlocks(selectedApplication.memo),
+      );
+      return {
+        ...current,
+        [selectedApplication.id]: nextBlocks,
+      };
+    });
+    setSaved(false);
+  }
+
+  function setOpenMemoIndex(index: number | null) {
+    setOpenMemoDrafts((current) => ({
+      ...current,
+      [selectedApplication.id]: index,
+    }));
+  }
+
+  function addMemoBlock() {
+    const nextIndex = memoBlocks.length;
+    updateMemoBlocks((blocks) => [...blocks, ""]);
+    setOpenMemoIndex(nextIndex);
   }
 
   function openDetailsEditor() {
     setDetailsDraft({
-      company: application.company,
-      position: application.position,
-      location: application.location,
-      employmentType: application.employmentType,
+      company: selectedApplication.company,
+      position: selectedApplication.position,
+      location: selectedApplication.location,
+      employmentType: selectedApplication.employmentType,
+      appliedAt: selectedApplication.appliedAt,
     });
     setEditDialogOpen(true);
   }
@@ -101,75 +173,146 @@ export default function ApplicationDetailPage() {
     );
   }
 
-  function handleDetailsSave() {
-    if (!detailsDraft?.company.trim() || !detailsDraft.position.trim()) return;
-    updateApplicationDetails(application.id, detailsDraft);
+  async function handleDetailsSave() {
+    if (
+      !detailsDraft?.company.trim() ||
+      !detailsDraft.position.trim() ||
+      !detailsDraft.appliedAt.trim()
+    ) {
+      return;
+    }
+    await updateApplicationDetails(selectedApplication.id, detailsDraft);
     closeDetailsEditor();
   }
 
   return (
     <main id="main-content" className="main-content">
-      <section className="detail-heading">
+      <section className={styles["detail-heading"]}>
         <div>
           <Link className="back-link" href={returnPath}>
             ← 지원 현황
           </Link>
-          <h1>{application.company}</h1>
+          <h1>{selectedApplication.company}</h1>
           <p>
-            {application.position} · {application.location} ·{" "}
-            {application.employmentType}
+            {selectedApplication.position} · {selectedApplication.location} ·{" "}
+            {selectedApplication.employmentType}
           </p>
         </div>
-        <div className="detail-heading-actions">
+        <div className={styles["detail-heading-actions"]}>
           <button
-            className="detail-edit-button"
+            className={styles["detail-edit-button"]}
             type="button"
             onClick={openDetailsEditor}
           >
             <Pencil aria-hidden="true" />
             <span>기본 정보 편집</span>
           </button>
-          <StatusIndicator tone={stageTone(application)}>
-            {application.needsReview ? "확인 필요" : stageLabel(application)}
-          </StatusIndicator>
         </div>
       </section>
 
-      {application.needsReview ? (
-        <section className="review-banner">
-          <div>
-            <strong>자동 분류 결과를 확인해 주세요.</strong>
-            <p>
-              회사와 포지션은 연필 버튼으로 편집하고, 진행 상태까지 점검한 뒤
-              확인하세요.
-            </p>
-          </div>
-          <Button
-            size="sm"
-            tone="neutral"
-            variant="outline"
-            onClick={() => markReviewed(application.id)}
-          >
-            확인 완료
-          </Button>
-        </section>
+      {selectedApplication.needsReview ? (
+        <CalloutBanner
+          className={styles["review-banner"]}
+          title="자동 분류 결과를 확인해 주세요."
+          tone="review"
+          action={
+            <Button
+              size="sm"
+              onClick={() => markReviewed(selectedApplication.id)}
+            >
+              확인 완료
+            </Button>
+          }
+        >
+          회사와 포지션은 연필 버튼으로 편집하고, 진행 상태까지 점검한 뒤
+          확인하세요.
+        </CalloutBanner>
       ) : null}
 
-      <section className="detail-layout">
-        <div className="detail-main">
+      <section className={styles["progress-summary"]}>
+        <div className={styles["progress-summary-heading"]}>
+          <h2>현재 진행 요약</h2>
+        </div>
+        <dl className={styles["summary-definition-list"]}>
+          <div>
+            <dt>진행 상태</dt>
+            <dd>
+              <Select
+                label="진행 상태"
+                wrapperClassName={styles["summary-select"]}
+                value={getApplicationProgressStatus(selectedApplication)}
+                onChange={(event) =>
+                  updateProgressStatus(
+                    selectedApplication.id,
+                    event.target.value as ApplicationProgressStatus,
+                  )
+                }
+              >
+                {PROGRESS_STATUS_OPTIONS.map((option) => (
+                  <option value={option.value} key={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </Select>
+            </dd>
+          </div>
+          <div>
+            <dt>지원일</dt>
+            <dd>{fullDate(selectedApplication.appliedAt)}</dd>
+          </div>
+          <div>
+            <dt>다음 일정</dt>
+            <dd className={styles["summary-schedule"]}>
+              <span>
+                {selectedApplication.nextActionAt
+                  ? fullDate(selectedApplication.nextActionAt)
+                  : "-"}
+              </span>
+              {selectedApplication.nextActionTitle ? (
+                <small>{selectedApplication.nextActionTitle}</small>
+              ) : null}
+            </dd>
+          </div>
+          <div>
+            <dt>원문 출처</dt>
+            <dd>{selectedApplication.source}</dd>
+          </div>
+        </dl>
+      </section>
+
+      <div className={styles["detail-layout"]}>
+        <div className={styles["detail-main"]}>
           <article className="panel">
             <div className="panel-heading">
-              <h2>지원 이력</h2>
+              <h2>진행 타임라인</h2>
             </div>
-            <ol className="timeline">
-              {sortedActivities.map((item) => (
+            <ol className={styles.timeline}>
+              {sortedActivities.map((item, index) => (
                 <li key={item.id}>
-                  <span className="timeline-mark" aria-hidden="true" />
+                  <span
+                    className={cn(
+                      styles["timeline-mark"],
+                      selectedApplication.needsReview &&
+                        index === 0 &&
+                        styles["is-review"],
+                    )}
+                    aria-hidden="true"
+                  />
                   <div>
                     <strong>{item.title}</strong>
                     <p>{item.description}</p>
                     <small>{fullDate(item.occurredAt)}</small>
                   </div>
+                  <button
+                    className={styles["timeline-delete-button"]}
+                    type="button"
+                    onClick={() =>
+                      deleteActivity(selectedApplication.id, item.id)
+                    }
+                    aria-label={`${item.title} 타임라인 항목 삭제`}
+                  >
+                    <Trash2 aria-hidden="true" />
+                  </button>
                 </li>
               ))}
             </ol>
@@ -178,18 +321,20 @@ export default function ApplicationDetailPage() {
           <article className="panel">
             <div className="panel-heading">
               <h2>관련 메일</h2>
-              <span className="panel-count">{application.emails.length}개</span>
+              <span className="panel-count">
+                {selectedApplication.emails.length}개
+              </span>
             </div>
-            <div className="email-list">
-              {application.emails.map((email) => (
+            <div className={styles["email-list"]}>
+              {selectedApplication.emails.map((email) => (
                 <button
-                  className="email-row"
+                  className={styles["email-row"]}
                   type="button"
                   onClick={() => setSelectedEmail(email)}
                   key={email.id}
                 >
-                  <span className="mail-icon" aria-hidden="true">
-                    @
+                  <span className={styles["mail-icon"]} aria-hidden="true">
+                    <Mail />
                   </span>
                   <span>
                     <strong>{email.subject}</strong>
@@ -200,8 +345,13 @@ export default function ApplicationDetailPage() {
                   <span>메일 내용 보기</span>
                 </button>
               ))}
-              {application.emails.length === 0 ? (
-                <div className="empty-state compact-empty">
+              {selectedApplication.emails.length === 0 ? (
+                <div
+                  className={cn(
+                    "empty-state",
+                    "compact-empty",
+                  )}
+                >
                   <strong>연결된 메일이 없습니다.</strong>
                   <p>직접 추가한 지원 이력은 메일 없이 관리할 수 있습니다.</p>
                 </div>
@@ -211,29 +361,28 @@ export default function ApplicationDetailPage() {
 
           <article className="panel">
             <div className="panel-heading">
-              <div>
-                <h2>변경 기록</h2>
-                <p className="section-description">
-                  변경 항목과 수정 전·후 값을 확인할 수 있습니다.
-                </p>
-              </div>
-              <span className="panel-count">{sortedChanges.length}개</span>
+              <h2>변경 기록</h2>
+              <span className="panel-count">
+                {sortedChanges.length}개
+              </span>
             </div>
             {sortedChanges.length ? (
-              <div className="change-history-list">
+              <div className={styles["change-history-list"]}>
                 {sortedChanges.map((item) => (
-                  <div className="change-history-row" key={item.id}>
-                    <span className="change-history-mark" aria-hidden="true" />
-                    <div>
-                      <strong>{item.title}</strong>
-                      <p>{item.description}</p>
-                      <small>{fullDateTime(item.occurredAt)}</small>
-                    </div>
+                  <div className={styles["change-history-row"]} key={item.id}>
+                    <strong>{item.title}</strong>
+                    <p>{item.description}</p>
+                    <small>{fullDateTime(item.occurredAt)}</small>
                   </div>
                 ))}
               </div>
             ) : (
-              <div className="empty-state compact-empty">
+              <div
+                className={cn(
+                  "empty-state",
+                  "compact-empty",
+                )}
+              >
                 <strong>아직 변경 기록이 없습니다.</strong>
                 <p>기본 정보, 진행 상태 또는 메모를 수정하면 여기에 남습니다.</p>
               </div>
@@ -241,77 +390,99 @@ export default function ApplicationDetailPage() {
           </article>
         </div>
 
-        <aside className="detail-sidebar">
-          <article className="panel detail-control-card">
-            <h2>진행 상태</h2>
-            <Select
-              label="진행 상태 변경"
-              value={statusValue(application)}
-              onChange={(event) =>
-                updateStatus(
-                  application.id,
-                  event.target.value as ApplicationStatus,
-                )
-              }
-            >
-              {STATUS_OPTIONS.map((option) => (
-                <option value={option.value} key={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </Select>
-            <dl className="detail-definition-list">
-              <div>
-                <dt>지원일</dt>
-                <dd>{fullDate(application.appliedAt)}</dd>
+        <aside className={styles["detail-sidebar"]}>
+          <article className={cn("panel", styles["memo-card"])}>
+            <div className={styles["memo-card-heading"]}>
+              <h2>메모</h2>
+              <button
+                className={styles["memo-add-button"]}
+                type="button"
+                onClick={addMemoBlock}
+                aria-label="메모 추가"
+              >
+                <Plus aria-hidden="true" />
+              </button>
+            </div>
+            {memoBlocks.length ? (
+              <div className={styles["memo-list"]}>
+                {memoBlocks.map((block, index) => (
+                  <details
+                    className={styles["memo-item"]}
+                    open={openMemoIndex === index}
+                    onToggle={(event) => {
+                      if (event.currentTarget.open) {
+                        setOpenMemoIndex(index);
+                      } else if (openMemoIndex === index) {
+                        setOpenMemoIndex(null);
+                      }
+                    }}
+                    key={`${selectedApplication.id}-${index}`}
+                  >
+                    <summary>
+                      <span>{memoPreview(block, index)}</span>
+                      <ChevronDown aria-hidden="true" />
+                    </summary>
+                    <div className={styles["memo-editor"]}>
+                      <textarea
+                        className={styles["memo-textarea"]}
+                        aria-label={`메모 ${index + 1} 내용`}
+                        placeholder="면접 준비나 회고를 기록하세요."
+                        value={block}
+                        onChange={(event) =>
+                          updateMemoBlocks((blocks) =>
+                            blocks.map((item, itemIndex) =>
+                              itemIndex === index
+                                ? event.target.value
+                                : item,
+                            ),
+                          )
+                        }
+                      />
+                      <button
+                        className={styles["memo-delete-button"]}
+                        type="button"
+                        onClick={() => {
+                          updateMemoBlocks((blocks) =>
+                            blocks.filter(
+                              (_item, itemIndex) => itemIndex !== index,
+                            ),
+                          );
+                          setOpenMemoIndex(null);
+                        }}
+                      >
+                        <Trash2 aria-hidden="true" />
+                        <span>삭제</span>
+                      </button>
+                    </div>
+                  </details>
+                ))}
               </div>
-              <div>
-                <dt>다음 행동</dt>
-                <dd>{application.nextAction}</dd>
+            ) : (
+              <div className={styles["memo-empty"]}>
+                <strong>아직 메모가 없습니다.</strong>
+                <p>면접 준비나 회고를 메모로 남겨두세요.</p>
               </div>
-              <div>
-                <dt>예정일</dt>
-                <dd>{fullDate(application.nextActionAt)}</dd>
-              </div>
-              <div>
-                <dt>원문 출처</dt>
-                <dd>{application.source}</dd>
-              </div>
-            </dl>
-          </article>
-
-          <article className="panel memo-card">
-            <h2>메모</h2>
-            <Textarea
-              label="지원 메모"
-              placeholder="면접 준비나 회고를 기록하세요."
-              value={memo}
-              onChange={(event) => {
-                setMemoDrafts((current) => ({
-                  ...current,
-                  [application.id]: event.target.value,
-                }));
-                setSaved(false);
-              }}
-            />
-            <div className="memo-actions">
+            )}
+            <div className={styles["memo-actions"]}>
               {saved ? (
                 <StatusIndicator tone="success">저장됨</StatusIndicator>
+              ) : isMemoDirty ? (
+                <StatusIndicator tone="warning">저장 안 됨</StatusIndicator>
               ) : (
                 <span />
               )}
-              <Button size="sm" onClick={handleMemoSave}>
-                메모 저장
+              <Button size="sm" onClick={handleMemoSave} disabled={!isMemoDirty}>
+                저장
               </Button>
             </div>
           </article>
         </aside>
-      </section>
+      </div>
 
       <Dialog
-        title="지원 정보 편집"
-        description="자동으로 정리된 기본 정보가 정확하지 않다면 수정하세요."
-        closeLabel="지원 정보 편집 창 닫기"
+        title="기본 정보 편집"
+        description="회사, 포지션, 근무지와 지원일을 수정하세요."
+        closeLabel="기본 정보 편집 창 닫기"
         open={editDialogOpen}
         onOpenChange={(open) => {
           if (!open) closeDetailsEditor();
@@ -355,6 +526,15 @@ export default function ApplicationDetailPage() {
                 updateDetailsDraft("employmentType", event.target.value)
               }
             />
+            <TextField
+              label="지원일"
+              placeholder="YYYY-MM-DD"
+              value={detailsDraft.appliedAt}
+              onChange={(event) =>
+                updateDetailsDraft("appliedAt", event.target.value)
+              }
+              required
+            />
             <DialogActions>
               <Button
                 type="button"
@@ -368,7 +548,8 @@ export default function ApplicationDetailPage() {
                 type="submit"
                 disabled={
                   !detailsDraft.company.trim() ||
-                  !detailsDraft.position.trim()
+                  !detailsDraft.position.trim() ||
+                  !detailsDraft.appliedAt.trim()
                 }
               >
                 변경사항 저장
@@ -387,7 +568,7 @@ export default function ApplicationDetailPage() {
           if (!open) setSelectedEmail(null);
         }}
       >
-        <div className="mail-preview">
+        <div className={styles["mail-preview"]}>
           <p>{selectedEmail?.summary}</p>
           <small>{fullDate(selectedEmail?.receivedAt ?? null)}</small>
         </div>
