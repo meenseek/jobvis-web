@@ -10,6 +10,7 @@ import {
 import {
   type AddApplicationInput,
   type ApplicationDetailsInput,
+  type ApplicationScheduleInput,
   applicationReducer,
   createManualApplication,
 } from "./application-state";
@@ -17,19 +18,28 @@ import {
   Application,
   ApplicationActivity,
   ApplicationChange,
+  ApplicationProgressStatus,
   ApplicationStatus,
+  applicationProgressStatusLabel,
+  fullDate,
+  getApplicationProgressStatus,
   initialApplications,
+  progressStatusToApplicationStatus,
+  scheduleTypeLabel,
   STATUS_OPTIONS,
   statusValue,
+  transitionProgressStatus,
 } from "./application-data";
 import {
   completeApplicationReview,
   completeApplicationSchedule,
   createApplication,
+  deleteApplicationActivity,
   fetchApplications,
   JobvisApiUnavailableError,
   updateApplicationDetails as updateApiApplicationDetails,
   updateApplicationMemo,
+  updateApplicationSchedule,
   updateApplicationStatus,
 } from "./jobvis-api-client";
 
@@ -37,11 +47,17 @@ type ApplicationContextValue = {
   applications: Application[];
   addApplication: (input: AddApplicationInput) => Promise<string>;
   completeNextAction: (id: string) => Promise<void>;
+  deleteActivity: (id: string, activityId: string) => Promise<void>;
   markReviewed: (id: string) => Promise<void>;
+  saveSchedule: (id: string, schedule: ApplicationScheduleInput) => Promise<void>;
   saveMemo: (id: string, memo: string) => Promise<void>;
   updateApplicationDetails: (
     id: string,
     details: ApplicationDetailsInput,
+  ) => Promise<void>;
+  updateProgressStatus: (
+    id: string,
+    progressStatus: ApplicationProgressStatus,
   ) => Promise<void>;
   updateStatus: (id: string, status: ApplicationStatus) => Promise<void>;
 };
@@ -149,6 +165,34 @@ export function ApplicationProvider({ children }: { children: ReactNode }) {
     });
   }
 
+  async function deleteActivity(id: string, activityId: string) {
+    const application = applications.find((item) => item.id === id);
+    if (!application) return;
+    const targetActivity = application.activities.find(
+      (item) => item.id === activityId,
+    );
+    if (!targetActivity) return;
+    try {
+      const updated = await deleteApplicationActivity(application, activityId);
+      dispatch({ type: "replace-one", application: updated });
+      return;
+    } catch (error) {
+      logApiError(error);
+    }
+    dispatch({
+      type: "delete-activity",
+      id,
+      activityId,
+      changes: changes([
+        {
+          title: "진행 타임라인",
+          before: targetActivity.title,
+          after: "삭제됨",
+        },
+      ]),
+    });
+  }
+
   async function markReviewed(id: string) {
     const application = applications.find((item) => item.id === id);
     if (!application?.needsReview) return;
@@ -196,6 +240,88 @@ export function ApplicationProvider({ children }: { children: ReactNode }) {
     });
   }
 
+  async function saveSchedule(id: string, schedule: ApplicationScheduleInput) {
+    const application = applications.find((item) => item.id === id);
+    if (!application || !schedule.nextActionAt) return;
+    const normalizedSchedule: ApplicationScheduleInput = {
+      nextActionAt: schedule.nextActionAt,
+      nextActionTitle: schedule.nextActionTitle?.trim() || null,
+      scheduleType: schedule.scheduleType,
+    };
+    if (
+      application.nextActionAt === normalizedSchedule.nextActionAt &&
+      (application.nextActionTitle ?? null) ===
+        normalizedSchedule.nextActionTitle &&
+      application.scheduleType === normalizedSchedule.scheduleType &&
+      !application.nextActionCompleted
+    ) {
+      return;
+    }
+
+    try {
+      const updated = await updateApplicationSchedule(
+        application,
+        normalizedSchedule,
+      );
+      dispatch({ type: "replace-one", application: updated });
+      return;
+    } catch (error) {
+      logApiError(error);
+    }
+
+    const wasScheduled = Boolean(application.nextActionAt);
+    const title =
+      normalizedSchedule.nextActionTitle ??
+      `${scheduleTypeLabel(normalizedSchedule.scheduleType)} 일정`;
+    const changedFields = [
+      (application.nextActionTitle ?? null) !==
+      normalizedSchedule.nextActionTitle
+        ? {
+            title: "일정명",
+            before: application.nextActionTitle ?? "내용 없음",
+            after: normalizedSchedule.nextActionTitle ?? "내용 없음",
+          }
+        : null,
+      application.nextActionAt !== normalizedSchedule.nextActionAt
+        ? {
+            title: "일정일",
+            before: application.nextActionAt
+              ? fullDate(application.nextActionAt)
+              : "일정 없음",
+            after: fullDate(normalizedSchedule.nextActionAt),
+          }
+        : null,
+      application.scheduleType !== normalizedSchedule.scheduleType
+        ? {
+            title: "일정 구분",
+            before: scheduleTypeLabel(application.scheduleType),
+            after: scheduleTypeLabel(normalizedSchedule.scheduleType),
+          }
+        : null,
+      application.nextActionCompleted
+        ? {
+            title: "일정 상태",
+            before: "완료",
+            after: "미완료",
+          }
+        : null,
+    ].filter((entry): entry is { title: string; before: string; after: string } =>
+      Boolean(entry),
+    );
+
+    dispatch({
+      type: "save-schedule",
+      id,
+      schedule: normalizedSchedule,
+      activity: activity(
+        "task",
+        wasScheduled ? "일정을 수정했습니다" : "일정을 등록했습니다",
+        `${title} · ${fullDate(normalizedSchedule.nextActionAt)}`,
+      ),
+      changes: changes(changedFields),
+    });
+  }
+
   async function updateApplicationDetails(
     id: string,
     details: ApplicationDetailsInput,
@@ -207,6 +333,7 @@ export function ApplicationProvider({ children }: { children: ReactNode }) {
       position: details.position.trim(),
       location: details.location.trim() || "근무지 미입력",
       employmentType: details.employmentType.trim() || "고용 형태 미입력",
+      appliedAt: details.appliedAt.trim() || application.appliedAt,
     };
     if (!normalizedDetails.company || !normalizedDetails.position) return;
 
@@ -218,6 +345,7 @@ export function ApplicationProvider({ children }: { children: ReactNode }) {
       { key: "position", label: "포지션" },
       { key: "location", label: "근무지" },
       { key: "employmentType", label: "고용 형태" },
+      { key: "appliedAt", label: "지원일" },
     ];
     const changedFields = editableFields.filter(
       ({ key }) => application[key] !== normalizedDetails[key],
@@ -295,15 +423,74 @@ export function ApplicationProvider({ children }: { children: ReactNode }) {
     });
   }
 
+  async function updateProgressStatus(
+    id: string,
+    progressStatus: ApplicationProgressStatus,
+  ) {
+    const application = applications.find((item) => item.id === id);
+    if (!application || getApplicationProgressStatus(application) === progressStatus) {
+      return;
+    }
+
+    try {
+      const updated = await updateApplicationStatus(
+        application,
+        progressStatusToApplicationStatus(progressStatus),
+        progressStatus,
+      );
+      dispatch({
+        type: "replace-one",
+        application: transitionProgressStatus(updated, progressStatus),
+      });
+      return;
+    } catch (error) {
+      logApiError(error);
+    }
+
+    const previousLabel = applicationProgressStatusLabel(application);
+    const label = applicationProgressStatusLabel(
+      transitionProgressStatus(application, progressStatus),
+    );
+    dispatch({
+      type: "update-progress-status",
+      id,
+      progressStatus,
+      activity: activity(
+        "status",
+        `${label} 상태가 되었습니다`,
+        "현재 지원 진행 상황에 반영했습니다.",
+      ),
+      changes: changes(
+        [
+          {
+            title: "진행 상태",
+            before: previousLabel,
+            after: label,
+          },
+          application.needsReview
+            ? {
+                title: "검토 상태",
+                before: "확인 필요",
+                after: "확인 완료",
+              }
+            : null,
+        ].filter((entry): entry is NonNullable<typeof entry> => Boolean(entry)),
+      ),
+    });
+  }
+
   return (
     <ApplicationContext.Provider
       value={{
         applications,
         addApplication,
         completeNextAction,
+        deleteActivity,
         markReviewed,
+        saveSchedule,
         saveMemo,
         updateApplicationDetails,
+        updateProgressStatus,
         updateStatus,
       }}
     >

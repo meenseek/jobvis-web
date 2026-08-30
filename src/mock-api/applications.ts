@@ -3,13 +3,21 @@ import {
   type Application,
   type ApplicationActivity,
   type ApplicationChange,
+  type ApplicationProgressStatus,
   type ApplicationStatus,
+  type ScheduleType,
+  applicationProgressStatusLabel,
   filterApplications,
+  getApplicationProgressStatus,
   initialApplications,
   normalizeApplicationFilter,
+  PROGRESS_STATUS_OPTIONS,
+  SCHEDULE_TYPE_OPTIONS,
+  scheduleTypeLabel,
   seoulDateKey,
   stageLabel,
   statusValue,
+  transitionProgressStatus,
   transitionStatus,
 } from "../applications/application-data";
 
@@ -60,8 +68,12 @@ function change(title: string, before: string, after: string): ApplicationChange
   };
 }
 
+function dateLabel(dateKey: string | null) {
+  return dateKey ?? "일정 없음";
+}
+
 async function readBody(request: NextRequest) {
-  if (!["POST", "PATCH", "PUT"].includes(request.method)) return {};
+  if (!["DELETE", "POST", "PATCH", "PUT"].includes(request.method)) return {};
   return (await request.json().catch(() => ({}))) as JsonRecord;
 }
 
@@ -157,6 +169,7 @@ async function updateDetails(request: NextRequest, id: string) {
       employmentType: String(
         body.employmentType ?? application.employmentType,
       ).trim(),
+      appliedAt: String(body.appliedAt ?? application.appliedAt).slice(0, 10),
     };
     const changes = [
       details.company !== application.company
@@ -170,6 +183,9 @@ async function updateDetails(request: NextRequest, id: string) {
         : null,
       details.employmentType !== application.employmentType
         ? change("고용 형태", application.employmentType, details.employmentType)
+        : null,
+      details.appliedAt !== application.appliedAt
+        ? change("지원일", application.appliedAt, details.appliedAt)
         : null,
     ].filter((item): item is ApplicationChange => Boolean(item));
 
@@ -203,13 +219,91 @@ async function updateMemo(request: NextRequest, id: string) {
   return updated ? json(updated) : notFound();
 }
 
+async function updateSchedule(request: NextRequest, id: string) {
+  const body = await readBody(request);
+  const nextActionAt = String(body.nextActionAt ?? "").slice(0, 10);
+  const nextActionTitle = String(body.nextActionTitle ?? "").trim() || null;
+  const scheduleType = String(body.scheduleType ?? "application") as ScheduleType;
+
+  if (!nextActionAt) {
+    return badRequest("nextActionAt is required");
+  }
+
+  if (!SCHEDULE_TYPE_OPTIONS.some((option) => option.value === scheduleType)) {
+    return badRequest("scheduleType is invalid");
+  }
+
+  const updated = replaceApplication(id, (application) => {
+    const title = nextActionTitle ?? `${scheduleTypeLabel(scheduleType)} 일정`;
+    const changes = [
+      (application.nextActionTitle ?? null) !== nextActionTitle
+        ? change(
+            "일정명",
+            application.nextActionTitle ?? "내용 없음",
+            nextActionTitle ?? "내용 없음",
+          )
+        : null,
+      application.nextActionAt !== nextActionAt
+        ? change(
+            "일정일",
+            dateLabel(application.nextActionAt),
+            dateLabel(nextActionAt),
+          )
+        : null,
+      application.scheduleType !== scheduleType
+        ? change(
+            "일정 구분",
+            scheduleTypeLabel(application.scheduleType),
+            scheduleTypeLabel(scheduleType),
+          )
+        : null,
+      application.nextActionCompleted
+        ? change("일정 상태", "완료", "미완료")
+        : null,
+    ].filter((item): item is ApplicationChange => Boolean(item));
+
+    return {
+      ...application,
+      nextActionAt,
+      nextActionTitle,
+      nextActionCompleted: false,
+      scheduleType,
+      activities: [
+        activity(
+          "task",
+          application.nextActionAt ? "일정을 수정했습니다" : "일정을 등록했습니다",
+          `${title} · ${nextActionAt}`,
+        ),
+        ...application.activities,
+      ],
+      changes: [...changes, ...application.changes],
+    };
+  });
+  return updated ? json(updated) : notFound();
+}
+
 async function updateStatus(request: NextRequest, id: string) {
   const body = await readBody(request);
   const status = String(body.status ?? "") as ApplicationStatus;
+  const progressStatusValue = String(body.progressStatus ?? "");
+  const progressStatus = PROGRESS_STATUS_OPTIONS.some(
+    (option) => option.value === progressStatusValue,
+  )
+    ? (progressStatusValue as ApplicationProgressStatus)
+    : null;
   const updated = replaceApplication(id, (application) => {
-    const previousLabel = stageLabel(application);
-    const transitioned = transitionStatus(application, status);
-    const nextLabel = stageLabel(transitioned);
+    const previousLabel = progressStatus
+      ? applicationProgressStatusLabel(application)
+      : stageLabel(application);
+    const transitioned = progressStatus
+      ? transitionProgressStatus(application, progressStatus)
+      : transitionStatus(application, status);
+    const nextLabel = progressStatus
+      ? applicationProgressStatusLabel(transitioned)
+      : stageLabel(transitioned);
+    const statusChanged = progressStatus
+      ? getApplicationProgressStatus(application) !== progressStatus
+      : statusValue(application) !== status;
     return {
       ...transitioned,
       activities: [
@@ -221,7 +315,7 @@ async function updateStatus(request: NextRequest, id: string) {
         ...application.activities,
       ],
       changes:
-        statusValue(application) === status
+        !statusChanged
           ? application.changes
           : [change("진행 상태", previousLabel, nextLabel), ...application.changes],
     };
@@ -261,6 +355,24 @@ function completeReview(id: string) {
   return updated ? json(updated) : notFound();
 }
 
+function deleteActivity(id: string, activityId: string) {
+  const updated = replaceApplication(id, (application) => {
+    const targetActivity = application.activities.find(
+      (item) => item.id === activityId,
+    );
+    if (!targetActivity) return application;
+    return {
+      ...application,
+      activities: application.activities.filter((item) => item.id !== activityId),
+      changes: [
+        change("진행 타임라인", targetActivity.title, "삭제됨"),
+        ...application.changes,
+      ],
+    };
+  });
+  return updated ? json(updated) : notFound();
+}
+
 export async function handleMockJobvisApi(
   request: NextRequest,
   path: string[],
@@ -296,6 +408,10 @@ export async function handleMockJobvisApi(
       : notFound();
   }
 
+  if (subResource === "activities" && action && request.method === "DELETE") {
+    return deleteActivity(id, action);
+  }
+
   if (subResource === "changes" && request.method === "GET") {
     return application ? json({ items: application.changes, nextCursor: null }) : notFound();
   }
@@ -314,6 +430,10 @@ export async function handleMockJobvisApi(
 
   if (subResource === "schedule" && action === "complete" && request.method === "POST") {
     return completeSchedule(id);
+  }
+
+  if (subResource === "schedule" && request.method === "PATCH") {
+    return updateSchedule(request, id);
   }
 
   if (subResource === "review" && action === "complete" && request.method === "POST") {

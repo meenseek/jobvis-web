@@ -16,6 +16,10 @@ export type ApplicationDisplayStatus =
   | "offer"
   | "offered"
   | "rejected";
+export type ApplicationProgressStatus = Exclude<
+  ApplicationDisplayStatus,
+  "review"
+>;
 export type ScheduleType =
   | "application"
   | "test"
@@ -61,6 +65,7 @@ export type Application = {
   needsReview: boolean;
   source: string;
   scheduleType: ScheduleType;
+  nextActionTitle?: string | null;
   nextActionAt: string | null;
   nextActionCompleted: boolean;
   memo: string;
@@ -100,6 +105,14 @@ export const DISPLAY_STATUS_OPTIONS: Array<{
   { value: "offered", label: "최종 합격" },
   { value: "rejected", label: "전형 종료" },
 ];
+
+export const PROGRESS_STATUS_OPTIONS: Array<{
+  value: ApplicationProgressStatus;
+  label: string;
+}> = DISPLAY_STATUS_OPTIONS.filter(
+  (option): option is { value: ApplicationProgressStatus; label: string } =>
+    option.value !== "review",
+);
 
 export const SCHEDULE_TYPE_OPTIONS: Array<{
   value: ScheduleType;
@@ -163,6 +176,12 @@ export function getApplicationDisplayStatus(
   >,
 ): ApplicationDisplayStatus {
   if (application.needsReview) return "review";
+  return getApplicationProgressStatus(application);
+}
+
+export function getApplicationProgressStatus(
+  application: Pick<Application, "result" | "stage" | "scheduleType">,
+): ApplicationProgressStatus {
   if (application.result === "offered") return "offered";
   if (application.result === "rejected") return "rejected";
   if (application.stage === "offer") return "offer";
@@ -182,6 +201,51 @@ export function applicationDisplayStatusLabel(
     DISPLAY_STATUS_OPTIONS.find((option) => option.value === displayStatus)
       ?.label ?? "지원·서류"
   );
+}
+
+export function applicationProgressStatusLabel(
+  application: Pick<Application, "result" | "stage" | "scheduleType">,
+) {
+  const displayStatus = getApplicationProgressStatus(application);
+  return (
+    DISPLAY_STATUS_OPTIONS.find((option) => option.value === displayStatus)
+      ?.label ?? "지원·서류"
+  );
+}
+
+export function applicationProgressStatusBadgeTone(
+  application: Pick<Application, "result" | "stage" | "scheduleType">,
+) {
+  return getApplicationProgressStatus(application);
+}
+
+export function progressStatusToApplicationStatus(
+  progressStatus: ApplicationProgressStatus,
+): ApplicationStatus {
+  if (progressStatus === "application" || progressStatus === "test") {
+    return "screening";
+  }
+  return progressStatus;
+}
+
+export function transitionProgressStatus(
+  application: Application,
+  progressStatus: ApplicationProgressStatus,
+): Application {
+  const transitioned = transitionStatus(
+    application,
+    progressStatusToApplicationStatus(progressStatus),
+  );
+
+  if (progressStatus === "test") {
+    return { ...transitioned, scheduleType: "test" };
+  }
+
+  if (progressStatus === "application" && transitioned.scheduleType === "test") {
+    return { ...transitioned, scheduleType: "application" };
+  }
+
+  return transitioned;
 }
 
 export function applicationStatusBadgeTone(application: {

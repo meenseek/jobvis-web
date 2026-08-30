@@ -1,9 +1,11 @@
 "use client";
 
 import { Button, StatusIndicator } from "@measure-twice/react";
+import { ChevronRight } from "lucide-react";
 import Link from "next/link";
 import { useAccountSettings } from "../settings/account-settings-provider";
 import { useApplications } from "../applications/application-provider";
+import { CalloutBanner } from "../ui/callout-banner";
 import {
   type Application,
   applicationDisplayStatusLabel,
@@ -56,31 +58,21 @@ export default function HomeClientPage({
       </section>
 
       {showMailConnectionBanner ? (
-        <section
+        <CalloutBanner
           className={styles["home-mail-setup-banner"]}
-          aria-labelledby="home-mail-setup-title"
-        >
-          <div className={styles["home-mail-setup-copy"]}>
-            <h2 id="home-mail-setup-title">
-              채용 메일을 연결하면 지원 내역을 자동으로 정리할 수 있어요
-            </h2>
-            <p>
-              Gmail 또는 Naver에서 지원 관련 메일만 찾아 회사, 포지션, 상태와
-              일정을 정리합니다. 연결은 언제든 해제할 수 있어요.
-            </p>
-          </div>
-          <div className={styles["home-mail-setup-actions"]}>
+          title="채용 메일을 연결하면 지원 내역을 자동으로 정리할 수 있어요"
+          action={
             <Link
-              className={cn(
-                styles["home-mail-setup-link"],
-                styles["home-mail-setup-link--primary"],
-              )}
+              className={cn("primary-action-link")}
               href="/settings?connect=mail"
             >
               채용 메일 연결하기
             </Link>
-          </div>
-        </section>
+          }
+        >
+          Gmail 또는 Naver에서 지원 관련 메일만 찾아 회사, 포지션, 상태와
+          일정을 정리합니다. 연결은 언제든 해제할 수 있어요.
+        </CalloutBanner>
       ) : null}
 
       <section
@@ -134,14 +126,16 @@ export default function HomeClientPage({
                     variant="outline"
                     onClick={() => completeNextAction(application.id)}
                   >
-                    완료
+                    일정 완료
                   </Button>
                 ) : (
                   <Link
                     className={styles["priority-link"]}
                     href={`/applications/${application.id}`}
+                    aria-label={`${application.company} 지원 상세 보기`}
+                    title="지원 상세 보기"
                   >
-                    확인
+                    <ChevronRight aria-hidden="true" />
                   </Link>
                 )}
               </div>
@@ -205,44 +199,48 @@ export default function HomeClientPage({
           </Link>
         </div>
         <div className={styles["home-support-list"]}>
-          {summary.activeApplications.map((application) => (
-            <Link
-              className={styles["support-row"]}
-              href={`/applications/${application.id}`}
-              key={application.id}
-            >
-              <span>
-                <strong>{application.company}</strong>
-                <small>{application.position}</small>
-              </span>
-              <span
-                className={cn(
-                  "status-badge",
-                  styles["support-status"],
-                  `status-badge--${applicationStatusBadgeTone(application)}`,
-                )}
+          {summary.activeApplications.map((application) => {
+            const hasOpenSchedule =
+              application.nextActionAt && !application.nextActionCompleted;
+            return (
+              <Link
+                className={styles["support-row"]}
+                href={`/applications/${application.id}`}
+                key={application.id}
               >
-                {applicationDisplayStatusLabel(application)}
-              </span>
-              <span className={styles["support-activity"]}>
-                <small>최근 변화</small>
-                <strong>{latestActivityTitle(application)}</strong>
-              </span>
-              <span
-                className={cn(
-                  styles["support-date"],
-                  !application.nextActionAt && styles["is-empty-schedule"],
-                )}
-              >
-                <small>예정</small>
-                <strong>
-                  {application.nextActionAt
-                    ? fullDate(application.nextActionAt)
-                    : "예정 없음"}
-                </strong>
-              </span>
-            </Link>
-          ))}
+                <span>
+                  <strong>{application.company}</strong>
+                  <small>{application.position}</small>
+                </span>
+                <span
+                  className={cn(
+                    "status-badge",
+                    styles["support-status"],
+                    `status-badge--${applicationStatusBadgeTone(application)}`,
+                  )}
+                >
+                  {applicationDisplayStatusLabel(application)}
+                </span>
+                <span className={styles["support-activity"]}>
+                  <small>최근 변화</small>
+                  <strong>{latestActivityTitle(application)}</strong>
+                </span>
+                <span
+                  className={cn(
+                    styles["support-date"],
+                    !hasOpenSchedule && styles["is-empty-schedule"],
+                  )}
+                >
+                  <small>예정</small>
+                  <strong>
+                    {hasOpenSchedule
+                      ? fullDate(application.nextActionAt)
+                      : "예정 없음"}
+                  </strong>
+                </span>
+              </Link>
+            );
+          })}
         </div>
       </section>
     </main>

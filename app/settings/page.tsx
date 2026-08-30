@@ -15,6 +15,7 @@ import {
   mailProviderLabel,
   MailProvider,
 } from "@/src/settings/settings-state";
+import { CalloutBanner } from "@/src/ui/callout-banner";
 import { cn } from "@/src/ui/class-names";
 import styles from "@/src/settings/settings.module.scss";
 
@@ -105,38 +106,23 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      <section
-        className={
+      <CalloutBanner
+        className={styles["settings-callout"]}
+        title={
           mailConnection
-            ? cn(styles["settings-callout"], styles["is-connected"])
-            : styles["settings-callout"]
+            ? "채용 메일을 자동으로 정리하고 있어요"
+            : "채용 메일을 연결할까요?"
         }
-        aria-labelledby="mail-connection-callout-title"
-      >
-        <span className={styles["settings-callout-mark"]} aria-hidden="true">
-          {mailConnection ? "✓" : "@"}
-        </span>
-        <div className={styles["settings-callout-copy"]}>
-          <StatusIndicator tone={mailConnection ? "success" : "warning"}>
-            {mailConnection ? "연결됨" : "연결 필요"}
-          </StatusIndicator>
-          <h2 id="mail-connection-callout-title">
-            {mailConnection
-              ? "채용 메일을 자동으로 정리하고 있어요"
-              : "채용 메일을 연결할까요?"}
-          </h2>
-          <p>
-            {mailConnection
-              ? "새 채용 메일을 지원 이력과 연결하고 진행 상태와 일정을 갱신합니다."
-              : "채용 메일 읽기 권한은 동의한 뒤에만 사용합니다. Jobvis는 채용 관련 메일만 가져와 지원 이력으로 정리합니다."}
-          </p>
-        </div>
-        {!mailConnection ? (
-          <div className={styles["settings-callout-actions"]}>
+        action={
+          !mailConnection ? (
             <Button onClick={openConnectDialog}>채용 메일 연결하기</Button>
-          </div>
-        ) : null}
-      </section>
+          ) : null
+        }
+      >
+        {mailConnection
+          ? "새 채용 메일을 지원 이력과 연결하고 진행 상태와 일정을 갱신합니다."
+          : "채용 메일 읽기 권한은 동의한 뒤에만 사용합니다. Jobvis는 채용 관련 메일만 가져와 지원 이력으로 정리합니다."}
+      </CalloutBanner>
 
       <section
         className={styles["settings-list"]}

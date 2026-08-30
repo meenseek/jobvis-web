@@ -277,7 +277,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
         </aside>
 
-        <section className={styles.workspace}>
+        <div className={styles.workspace}>
           <header className={styles.topbar}>
             <div className={styles["topbar-actions"]}>
               <span className={styles["sync-copy"]}>
@@ -288,7 +288,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             </div>
           </header>
           {children}
-        </section>
+        </div>
       </div>
     </>
   );

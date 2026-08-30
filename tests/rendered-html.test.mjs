@@ -122,6 +122,7 @@ async function readStyleBundle() {
     "app/tokens.scss",
     "app/base.scss",
     "src/ui/shared.scss",
+    "src/ui/callout-banner.module.scss",
     "src/auth/auth.module.scss",
     "src/shell/shell.module.scss",
     "src/home/home.module.scss",
@@ -247,31 +248,42 @@ test("uses real route navigation and shared application state", async () => {
   assert.match(provider, /completeNextAction/);
   assert.match(provider, /saveMemo/);
   assert.match(provider, /updateApplicationDetails/);
+  assert.match(provider, /saveSchedule/);
+  assert.match(provider, /deleteActivity/);
   assert.match(provider, /description: `\$\{before\} → \$\{after\}`/);
   assert.match(provider, /title: "진행 상태"/);
   assert.match(provider, /title: "검토 상태"/);
   assert.match(provider, /title: "일정 상태"/);
+  assert.match(provider, /title: "일정명"/);
+  assert.match(provider, /title: "일정 구분"/);
   assert.match(provider, /title: "메모"/);
   assert.match(applicationsPage, /applicationDetailPath/);
   assert.match(applicationsPage, /router\.replace\(applicationListPath/);
   assert.match(applicationsPage, /markReviewed/);
   assert.match(applicationsPage, /일괄 확인/);
+  assert.match(applicationsPage, /확인 필요 항목을 일괄 확인할까요/);
   assert.match(detailPage, /safeApplicationListPath/);
-  assert.match(detailPage, /STATUS_OPTIONS/);
+  assert.match(detailPage, /PROGRESS_STATUS_OPTIONS/);
   assert.match(detailPage, /<Pencil aria-hidden="true"/);
-  assert.match(detailPage, /지원 정보 편집/);
+  assert.match(detailPage, /기본 정보 편집/);
+  assert.doesNotMatch(detailPage, /다음 일정 이름/);
+  assert.match(detailPage, /timeline-delete-button/);
   assert.match(detailPage, /변경 기록/);
-  assert.match(detailPage, /변경 항목과 수정 전·후 값/);
+  assert.doesNotMatch(detailPage, /변경 항목과 수정 전·후 값/);
   assert.match(detailPage, /sortedChanges/);
   assert.match(calendarPage, /aria-pressed/);
   assert.match(calendarPage, /aria-current/);
-  assert.match(calendarPage, /SCHEDULE_TYPE_OPTIONS/);
+  assert.doesNotMatch(calendarPage, /SCHEDULE_TYPE_OPTIONS/);
+  assert.doesNotMatch(calendarPage, /일정 유형/);
+  assert.match(calendarPage, /saveSchedule/);
+  assert.match(calendarPage, /일정 등록/);
   assert.match(calendarPage, /<article className=\{styles\["calendar-panel"\]\}/);
   assert.doesNotMatch(
     calendarPage,
     /cn\("panel",\s*styles\["calendar-panel"\]/,
   );
   assert.match(analyticsPage, /analytics-trend-graphic/);
+  assert.match(analyticsPage, /conversion-list/);
   assert.match(analyticsPage, /pathLength=\{1\}/);
   assert.match(settingsPage, /채용 메일을 연결할까요/);
   assert.match(settingsPage, /URLSearchParams\(window\.location\.search\)/);
@@ -303,6 +315,7 @@ test("uses real route navigation and shared application state", async () => {
   assert.match(layout, /@measure-twice\/react\/styles\.css/);
   assert.match(styles, /--mt-color-bg-surface/);
   assert.match(styles, /@keyframes chart-line-draw/);
+  assert.match(styles, /@keyframes conversion-bar-fill-in/);
   assert.match(styles, /@keyframes timeline-radar/);
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\)/);
   assert.doesNotMatch(styles, /\.timeline li:not\(:last-child\)::after/);
@@ -328,6 +341,8 @@ test("uses real route navigation and shared application state", async () => {
   assert.match(apiRoute, /x-jobvis-user-id/);
   assert.match(mockApi, /x-jobvis-api-mode/);
   assert.match(mockApi, /filterApplications/);
+  assert.match(mockApi, /updateSchedule/);
+  assert.match(mockApi, /deleteActivity/);
   assert.match(mockApi, /completeSchedule/);
   assert.match(homePage, /<HomeClientPage today=\{today\} todayLabel=\{todayLabel\}/);
   assert.match(homeClientPage, /buildRuleBasedHomeSummary/);
@@ -340,6 +355,8 @@ test("uses real route navigation and shared application state", async () => {
   assert.match(homeSummary, /briefing/);
   assert.match(apiClient, /\/api\/backend/);
   assert.match(apiClient, /JobvisApiUnavailableError/);
+  assert.match(apiClient, /updateApplicationSchedule/);
+  assert.match(apiClient, /deleteApplicationActivity/);
   assert.doesNotMatch(styles, /thead\s*\{\s*display:\s*none/);
   await assert.rejects(access(new URL("../app/_sites-preview", projectRoot)));
   await assert.rejects(access(new URL("../app/application-provider.tsx", projectRoot)));
@@ -516,6 +533,71 @@ test("application reducer applies representative user actions", () => {
   );
   assert.strictEqual(completedAgain, completed);
 
+  state = applicationReducer(state, {
+    type: "save-schedule",
+    id: "toss-payments",
+    schedule: {
+      nextActionAt: "2026-09-03",
+      nextActionTitle: "과제 제출",
+      scheduleType: "test",
+    },
+    activity: event,
+    changes: [
+      {
+        ...change,
+        id: "test-change-schedule-title",
+        title: "일정명",
+        description: "내용 없음 → 과제 제출",
+      },
+      {
+        ...change,
+        id: "test-change-schedule-date",
+        title: "일정일",
+        description: "2026-08-29 → 2026-09-03",
+      },
+      {
+        ...change,
+        id: "test-change-schedule-open",
+        title: "일정 상태",
+        description: "완료 → 미완료",
+      },
+    ],
+  });
+  const rescheduled = state.find(
+    (application) => application.id === "toss-payments",
+  );
+  assert.equal(rescheduled?.nextActionAt, "2026-09-03");
+  assert.equal(rescheduled?.nextActionTitle, "과제 제출");
+  assert.equal(rescheduled?.nextActionCompleted, false);
+  assert.equal(rescheduled?.changes.length, 5);
+
+  const rescheduledActivityId = rescheduled?.activities[0]?.id;
+  assert.ok(rescheduledActivityId);
+  state = applicationReducer(state, {
+    type: "delete-activity",
+    id: "toss-payments",
+    activityId: rescheduledActivityId,
+    changes: [
+      {
+        ...change,
+        id: "test-change-delete-activity",
+        title: "진행 타임라인",
+        description: "일정을 수정했습니다 → 삭제됨",
+      },
+    ],
+  });
+  const activityDeleted = state.find(
+    (application) => application.id === "toss-payments",
+  );
+  assert.equal(
+    activityDeleted?.activities.some(
+      (activity) => activity.id === rescheduledActivityId,
+    ),
+    false,
+  );
+  assert.equal(activityDeleted?.changes.length, 6);
+  assert.equal(activityDeleted?.changes[0]?.title, "진행 타임라인");
+
   const musinsaInitialActivityCount =
     state.find((application) => application.id === "musinsa")?.activities
       .length ?? 0;
@@ -557,6 +639,7 @@ test("application reducer applies representative user actions", () => {
       position: "Backend Engineer",
       location: "서울 성수동",
       employmentType: "정규직",
+      appliedAt: "2026-08-20",
     },
     changes: [
       {
@@ -591,6 +674,7 @@ test("application reducer applies representative user actions", () => {
       position: "Backend Engineer",
       location: "서울 성수동",
       employmentType: "정규직",
+      appliedAt: "2026-08-20",
     },
     changes: [{ ...change, id: "duplicate-details-change" }],
   });

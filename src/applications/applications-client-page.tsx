@@ -94,6 +94,7 @@ export default function ApplicationsClientPage({
   const query = initialQuery;
   const filter = initialFilter;
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [bulkReviewDialogOpen, setBulkReviewDialogOpen] = useState(false);
   const [bulkReviewing, setBulkReviewing] = useState(false);
   const [company, setCompany] = useState("");
   const [position, setPosition] = useState("");
@@ -135,6 +136,7 @@ export default function ApplicationsClientPage({
     setBulkReviewing(true);
     try {
       await Promise.all(reviewApplicationIds.map((id) => markReviewed(id)));
+      setBulkReviewDialogOpen(false);
     } finally {
       setBulkReviewing(false);
     }
@@ -157,7 +159,7 @@ export default function ApplicationsClientPage({
             tone="neutral"
             variant="outline"
             disabled={!reviewCount || bulkReviewing}
-            onClick={handleBulkReviewComplete}
+            onClick={() => setBulkReviewDialogOpen(true)}
           >
             {bulkReviewing ? "확인 중" : "일괄 확인"}
           </Button>
@@ -165,7 +167,10 @@ export default function ApplicationsClientPage({
         </div>
       </section>
 
-      <section className={styles["applications-panel"]}>
+      <section
+        className={styles["applications-panel"]}
+        aria-label="지원 목록"
+      >
         <div className={styles["applications-toolbar"]}>
           <div className={styles["applications-toolbar-start"]}>
             <div className={styles["application-summary-controls"]}>
@@ -296,6 +301,35 @@ export default function ApplicationsClientPage({
           <span>메일 원문 연결 정보 포함</span>
         </footer>
       </section>
+
+      <Dialog
+        title="확인 필요 항목을 일괄 확인할까요?"
+        description={`${reviewCount}개 지원건의 확인 필요 표시를 모두 해제합니다.`}
+        closeLabel="일괄 확인 확인 창 닫기"
+        open={bulkReviewDialogOpen}
+        onOpenChange={(open) => {
+          if (!bulkReviewing) setBulkReviewDialogOpen(open);
+        }}
+      >
+        <DialogActions>
+          <Button
+            type="button"
+            tone="neutral"
+            variant="ghost"
+            onClick={() => setBulkReviewDialogOpen(false)}
+            disabled={bulkReviewing}
+          >
+            취소
+          </Button>
+          <Button
+            type="button"
+            onClick={handleBulkReviewComplete}
+            disabled={!reviewCount || bulkReviewing}
+          >
+            {bulkReviewing ? "확인 중" : "확인 완료"}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Dialog
         title="지원 내역 추가"

@@ -3,10 +3,12 @@ import type {
   ApplicationActivity,
   ApplicationChange,
   ApplicationEmail,
+  ApplicationProgressStatus,
   ApplicationStage,
   ApplicationStatus,
   ScheduleType,
 } from "./application-data";
+import type { ApplicationScheduleInput } from "./application-state";
 
 type ApiApplication = {
   id: string;
@@ -23,6 +25,7 @@ type ApiApplication = {
   needsReview: boolean;
   source: string;
   scheduleType: ScheduleType;
+  nextActionTitle?: string | null;
   nextActionAt: string | null;
   nextActionCompleted: boolean;
   memo?: string;
@@ -135,6 +138,23 @@ export async function completeApplicationReview(application: Application) {
   return toApplication(updated);
 }
 
+export async function deleteApplicationActivity(
+  application: Application,
+  activityId: string,
+) {
+  const updated = await apiRequest<ApiApplication>(
+    `/applications/${application.id}/activities/${activityId}`,
+    {
+      method: "DELETE",
+      body: {
+        mutationId: mutationId(),
+        expectedVersion: application.version,
+      },
+    },
+  );
+  return toApplication(updated);
+}
+
 export async function updateApplicationMemo(
   application: Application,
   memo: string,
@@ -153,6 +173,24 @@ export async function updateApplicationMemo(
   return toApplication(updated);
 }
 
+export async function updateApplicationSchedule(
+  application: Application,
+  schedule: ApplicationScheduleInput,
+) {
+  const updated = await apiRequest<ApiApplication>(
+    `/applications/${application.id}/schedule`,
+    {
+      method: "PATCH",
+      body: {
+        mutationId: mutationId(),
+        expectedVersion: application.version,
+        ...schedule,
+      },
+    },
+  );
+  return toApplication(updated);
+}
+
 export async function updateApplicationDetails(
   application: Application,
   details: {
@@ -160,6 +198,7 @@ export async function updateApplicationDetails(
     position: string;
     location: string;
     employmentType: string;
+    appliedAt: string;
   },
 ) {
   const updated = await apiRequest<ApiApplication>(
@@ -179,6 +218,7 @@ export async function updateApplicationDetails(
 export async function updateApplicationStatus(
   application: Application,
   status: ApplicationStatus,
+  progressStatus?: ApplicationProgressStatus,
 ) {
   const updated = await apiRequest<ApiApplication>(
     `/applications/${application.id}/status`,
@@ -188,6 +228,7 @@ export async function updateApplicationStatus(
         mutationId: mutationId(),
         expectedVersion: application.version,
         status,
+        progressStatus,
       },
     },
   );

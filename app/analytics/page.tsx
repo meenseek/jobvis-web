@@ -31,6 +31,8 @@ export default function AnalyticsPage() {
   const [range, setRange] = useState("180");
 
   const periodApplications = useMemo(() => {
+    if (range === "all") return applications;
+
     const cutoff = new Date(`${today}T00:00:00+09:00`);
     cutoff.setDate(cutoff.getDate() - (Number(range) - 1));
     const cutoffKey = seoulDateKey(cutoff);
@@ -52,6 +54,7 @@ export default function AnalyticsPage() {
   ).length;
   const screeningRate = total ? Math.round((screened / total) * 100) : 0;
   const interviewRate = total ? Math.round((interviewed / total) * 100) : 0;
+  const offerRate = total ? Math.round((offered / total) * 100) : 0;
   const monthlyCounts = monthOptions.map(({ key }) => {
     return periodApplications.filter((application) =>
       application.appliedAt.startsWith(key),
@@ -92,6 +95,29 @@ export default function AnalyticsPage() {
     },
     {},
   );
+  const conversionMetrics = [
+    {
+      key: "screening",
+      label: "서류 합격률",
+      count: screened,
+      rate: screeningRate,
+      className: styles["conversion-bar--screening"],
+    },
+    {
+      key: "interview",
+      label: "면접 진행률",
+      count: interviewed,
+      rate: interviewRate,
+      className: styles["conversion-bar--interview"],
+    },
+    {
+      key: "offer",
+      label: "최종 합격률",
+      count: offered,
+      rate: offerRate,
+      className: styles["conversion-bar--offer"],
+    },
+  ];
 
   return (
     <main
@@ -118,6 +144,7 @@ export default function AnalyticsPage() {
           <option value="30">최근 30일</option>
           <option value="90">최근 90일</option>
           <option value="180">최근 180일</option>
+          <option value="all">전체</option>
         </Select>
       </section>
 
@@ -161,144 +188,161 @@ export default function AnalyticsPage() {
         </article>
       </section>
 
-      <section className={styles["analytics-grid"]}>
-        <article className="panel" key={`trend-${range}`}>
-          <div className="panel-heading">
+      <div className={styles["analytics-grid"]}>
+        <section className={styles["analytics-section"]}>
+          <div className={styles["analytics-section-heading"]}>
             <h2>월별 지원 흐름</h2>
             <span className="panel-count">총 {total}건</span>
           </div>
-          <figure className={styles["analytics-trend-chart"]}>
-            <svg
-              className={styles["analytics-trend-graphic"]}
-              viewBox="0 0 600 190"
-              role="img"
-              aria-label="최근 6개월 월별 지원 건수 추이"
-            >
-              <defs>
-                <linearGradient
-                  id="application-trend-fill"
-                  x1="0"
-                  y1="0"
-                  x2="0"
-                  y2="1"
-                >
-                  <stop offset="0%" stopColor="var(--mt-color-action)" stopOpacity="0.2" />
-                  <stop offset="100%" stopColor="var(--mt-color-action)" stopOpacity="0" />
-                </linearGradient>
-              </defs>
-              {[chartTop, (chartTop + chartBottom) / 2, chartBottom].map(
-                (y) => (
-                  <line
-                    className={styles["analytics-trend-grid"]}
-                    x1={chartLeft}
-                    x2={chartRight}
-                    y1={y}
-                    y2={y}
-                    key={y}
-                  />
-                ),
-              )}
-              <path
-                className={styles["analytics-trend-area"]}
-                d={trendAreaPath}
-                fill="url(#application-trend-fill)"
-              />
-              <path
-                className={styles["analytics-trend-line"]}
-                d={trendLinePath}
-                pathLength={1}
-              />
-              {chartPoints.map((point, index) => (
-                <g
-                  className={cn(
-                    styles["analytics-trend-point"],
-                    index === chartPoints.length - 1 && styles["is-current"],
-                  )}
-                  style={{ animationDelay: `${480 + index * 90}ms` }}
-                  key={monthOptions[index].key}
-                >
-                  {index === chartPoints.length - 1 ? (
+          <article
+            className={cn("panel", styles["analytics-chart-card"])}
+            key={`trend-${range}`}
+          >
+            <figure className={styles["analytics-trend-chart"]}>
+              <svg
+                className={styles["analytics-trend-graphic"]}
+                viewBox="0 0 600 190"
+                role="img"
+                aria-label="최근 6개월 월별 지원 건수 추이"
+              >
+                <defs>
+                  <linearGradient
+                    id="application-trend-fill"
+                    x1="0"
+                    y1="0"
+                    x2="0"
+                    y2="1"
+                  >
+                    <stop
+                      offset="0%"
+                      stopColor="var(--mt-color-action)"
+                      stopOpacity="0.2"
+                    />
+                    <stop
+                      offset="100%"
+                      stopColor="var(--mt-color-action)"
+                      stopOpacity="0"
+                    />
+                  </linearGradient>
+                </defs>
+                {[chartTop, (chartTop + chartBottom) / 2, chartBottom].map(
+                  (y) => (
+                    <line
+                      className={styles["analytics-trend-grid"]}
+                      x1={chartLeft}
+                      x2={chartRight}
+                      y1={y}
+                      y2={y}
+                      key={y}
+                    />
+                  ),
+                )}
+                <path
+                  className={styles["analytics-trend-area"]}
+                  d={trendAreaPath}
+                  fill="url(#application-trend-fill)"
+                />
+                <path
+                  className={styles["analytics-trend-line"]}
+                  d={trendLinePath}
+                  pathLength={1}
+                />
+                {chartPoints.map((point, index) => (
+                  <g
+                    className={cn(
+                      styles["analytics-trend-point"],
+                      index === chartPoints.length - 1 && styles["is-current"],
+                    )}
+                    style={{ animationDelay: `${480 + index * 90}ms` }}
+                    key={monthOptions[index].key}
+                  >
+                    {index === chartPoints.length - 1 ? (
+                      <circle
+                        className={styles["analytics-trend-point-halo"]}
+                        cx={point.x}
+                        cy={point.y}
+                        r="8"
+                      />
+                    ) : null}
                     <circle
-                      className={styles["analytics-trend-point-halo"]}
+                      className={styles["analytics-trend-point-core"]}
                       cx={point.x}
                       cy={point.y}
-                      r="8"
+                      r="3.5"
                     />
-                  ) : null}
-                  <circle
-                    className={styles["analytics-trend-point-core"]}
-                    cx={point.x}
-                    cy={point.y}
-                    r="3.5"
-                  />
-                </g>
-              ))}
-            </svg>
-            <figcaption className={styles["analytics-trend-labels"]}>
-              {chartPoints.map((point, index) => (
-                <span key={monthOptions[index].key}>
-                  <strong>{point.count}건</strong>
-                  <small>{point.label}</small>
-                </span>
-              ))}
-            </figcaption>
-          </figure>
-        </article>
+                  </g>
+                ))}
+              </svg>
+              <figcaption className={styles["analytics-trend-labels"]}>
+                {chartPoints.map((point, index) => (
+                  <span key={monthOptions[index].key}>
+                    <strong>{point.count}건</strong>
+                    <small>{point.label}</small>
+                  </span>
+                ))}
+              </figcaption>
+            </figure>
+          </article>
+        </section>
 
-        <article className="panel" key={`funnel-${range}`}>
-          <div className="panel-heading">
+        <section className={styles["analytics-section"]}>
+          <div className={styles["analytics-section-heading"]}>
             <h2>전형 단계 전환</h2>
           </div>
-          <div className={styles["funnel-list"]}>
-            {[
-              ["전체 지원", total],
-              ["서류 심사 통과", screened],
-              ["면접 진입", interviewed],
-              ["최종 합격", offered],
-            ].map(([label, count], index) => (
-              <div className={styles["funnel-row"]} key={label}>
+          <article
+            className={cn("panel", styles["analytics-chart-card"])}
+            key={`conversion-${range}`}
+          >
+            <div className={styles["conversion-list"]}>
+              {conversionMetrics.map((metric, index) => (
+                <div className={styles["conversion-row"]} key={metric.key}>
+                  <div className={styles["conversion-row-heading"]}>
+                    <span>
+                      <strong>{metric.label}</strong>
+                      <small>{metric.count}건 / 전체 {total}건</small>
+                    </span>
+                    <b>{metric.rate}%</b>
+                  </div>
+                  <div className={styles["conversion-track"]}>
+                    <span
+                      className={metric.className}
+                      style={{
+                        width: `${metric.rate}%`,
+                        animationDelay: `${160 + index * 120}ms`,
+                      }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </article>
+        </section>
+      </div>
+
+      <section
+        className={cn(styles["analytics-section"], styles["source-section"])}
+        key={`sources-${range}`}
+      >
+        <div className={styles["analytics-section-heading"]}>
+          <h2>지원 이력 출처</h2>
+        </div>
+        <article className={cn("panel", styles["analytics-chart-card"])}>
+          <div className={styles["source-breakdown"]}>
+            {Object.entries(sourceCounts).map(([source, count]) => (
+              <div key={source}>
                 <span>
-                  <strong>{label}</strong>
+                  <strong>{source}</strong>
                   <small>{count}건</small>
                 </span>
-                <span className={styles["funnel-track"]}>
+                <span className={styles["source-track"]}>
                   <span
-                    style={{ width: `${total ? (Number(count) / total) * 100 : 0}%` }}
+                    style={{ width: `${total ? (count / total) * 100 : 0}%` }}
                   />
                 </span>
-                <small>
-                  {index === 0 || total === 0
-                    ? "100%"
-                    : `${Math.round((Number(count) / total) * 100)}%`}
-                </small>
               </div>
             ))}
           </div>
         </article>
-      </section>
-
-      <section
-        className={cn("panel", styles["source-panel"])}
-        key={`sources-${range}`}
-      >
-        <div className="panel-heading">
-          <h2>지원 이력 출처</h2>
-        </div>
-        <div className={styles["source-breakdown"]}>
-          {Object.entries(sourceCounts).map(([source, count]) => (
-            <div key={source}>
-              <span>
-                <strong>{source}</strong>
-                <small>{count}건</small>
-              </span>
-              <span className={styles["source-track"]}>
-                <span
-                  style={{ width: `${total ? (count / total) * 100 : 0}%` }}
-                />
-              </span>
-            </div>
-          ))}
-        </div>
       </section>
     </main>
   );

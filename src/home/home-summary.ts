@@ -1,6 +1,7 @@
 import {
   type Application,
   filterScheduledApplications,
+  getApplicationDisplayStatus,
   scheduleTypeLabel,
   seoulDateKey,
 } from "../applications/application-data";
@@ -22,6 +23,15 @@ export type HomeSummary = {
   activeApplications: Application[];
   weeklySchedules: Application[];
 };
+
+function canCompleteScheduleFromHome(application: Application) {
+  const displayStatus = getApplicationDisplayStatus(application);
+  return displayStatus === "test" || displayStatus === "interview";
+}
+
+function openScheduleDate(application: Application) {
+  return application.nextActionCompleted ? null : application.nextActionAt;
+}
 
 export function buildRuleBasedHomeSummary(
   applications: Application[],
@@ -81,7 +91,7 @@ export function buildRuleBasedHomeSummary(
             ? ("기한 경과" as const)
             : ("오늘" as const),
         detail: `${scheduleTypeLabel(application.scheduleType)} 일정`,
-        canComplete: true,
+        canComplete: canCompleteScheduleFromHome(application),
       })),
   ]
     .sort((a, b) => {
@@ -99,8 +109,8 @@ export function buildRuleBasedHomeSummary(
   const activeSupportItems = [...activeApplications]
     .sort((a, b) => {
       const scheduleComparison = (
-        a.nextActionAt ?? "9999-12-31"
-      ).localeCompare(b.nextActionAt ?? "9999-12-31");
+        openScheduleDate(a) ?? "9999-12-31"
+      ).localeCompare(openScheduleDate(b) ?? "9999-12-31");
       return scheduleComparison || b.appliedAt.localeCompare(a.appliedAt);
     })
     .slice(0, 5);
