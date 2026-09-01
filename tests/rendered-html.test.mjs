@@ -35,6 +35,11 @@ import {
   mailProviderLabel,
 } from "../src/settings/settings-state.ts";
 import { MutationAttemptRegistry } from "../src/api/mutation-attempts.ts";
+import {
+  appendTrustedSiteGatewayHeaders,
+  TrustedSiteGatewayConfigurationError,
+  TrustedSiteIdentityRequiredError,
+} from "../src/auth/trusted-site-gateway.ts";
 
 const projectRoot = new URL("../", import.meta.url);
 const [currentYear, currentMonth] = seoulDateKey().split("-");
@@ -44,6 +49,63 @@ let nextServerOutput = "";
 let fakeJobvisApi;
 let fakeJobvisApiBaseUrlPromise;
 const fakeJobvisApiRequests = [];
+
+test("Sites gateway forwards only platform identity with a server secret", () => {
+  const previousMode = process.env.JOBVIS_API_MODE;
+  const previousSecret = process.env.JOBVIS_TRUSTED_SITE_SECRET;
+  try {
+    process.env.JOBVIS_API_MODE = "sites";
+    process.env.JOBVIS_TRUSTED_SITE_SECRET =
+      "test-only-site-gateway-secret-32-bytes";
+
+    const headers = new Headers();
+    appendTrustedSiteGatewayHeaders(
+      {
+        headers: new Headers({
+          "oai-authenticated-user-id": "sites-user-1",
+          "x-jobvis-site-user-id": "forged-user",
+        }),
+      },
+      headers,
+    );
+    assert.equal(headers.get("x-jobvis-site-user-id"), "sites-user-1");
+    assert.equal(
+      headers.get("x-jobvis-site-gateway-secret"),
+      "test-only-site-gateway-secret-32-bytes",
+    );
+
+    assert.throws(
+      () =>
+        appendTrustedSiteGatewayHeaders(
+          { headers: new Headers() },
+          new Headers(),
+        ),
+      TrustedSiteIdentityRequiredError,
+    );
+
+    process.env.JOBVIS_TRUSTED_SITE_SECRET = "too-short";
+    assert.throws(
+      () =>
+        appendTrustedSiteGatewayHeaders(
+          {
+            headers: new Headers({
+              "oai-authenticated-user-id": "sites-user-1",
+            }),
+          },
+          new Headers(),
+        ),
+      TrustedSiteGatewayConfigurationError,
+    );
+  } finally {
+    if (previousMode === undefined) delete process.env.JOBVIS_API_MODE;
+    else process.env.JOBVIS_API_MODE = previousMode;
+    if (previousSecret === undefined) {
+      delete process.env.JOBVIS_TRUSTED_SITE_SECRET;
+    } else {
+      process.env.JOBVIS_TRUSTED_SITE_SECRET = previousSecret;
+    }
+  }
+});
 
 test("mutation ids belong to an exact request attempt", () => {
   let sequence = 0;
@@ -509,6 +571,10 @@ test("uses real route navigation and shared application state", async () => {
   assert.match(authProvider, /keepalive: true/);
   assert.match(authProvider, /expireSession/);
   assert.match(authProvider, /response\.status === 401/);
+  assert.match(
+    authProvider,
+    /isSitesMode \? "unavailable" : "unauthenticated"/,
+  );
   assert.match(authProvider, /setStatus\("unavailable"\)/);
   assert.match(authProvider, /retrySession/);
   assert.match(authProvider, /createDemoUser/);
@@ -606,6 +672,10 @@ test("uses real route navigation and shared application state", async () => {
   assert.match(layout, /<AccountSettingsProvider>/);
   assert.match(layout, /suppressHydrationWarning/);
   assert.match(layout, /@measure-twice\/react\/styles\.css/);
+  assert.match(layout, /JOBVIS_WEB_ORIGIN/);
+  assert.match(layout, /new URL\("\/og\.png", metadataBase\)/);
+  assert.match(layout, /openGraph/);
+  assert.match(layout, /twitter/);
   assert.match(styles, /--mt-color-bg-surface/);
   assert.match(styles, /@keyframes chart-line-draw/);
   assert.match(styles, /@keyframes conversion-bar-fill-in/);
@@ -628,8 +698,10 @@ test("uses real route navigation and shared application state", async () => {
     /"dev:local": "JOBVIS_API_MODE=local NEXT_PUBLIC_JOBVIS_API_MODE=local next dev"/,
   );
   assert.match(packageJson, /NEXT_PUBLIC_JOBVIS_AUTH_BYPASS=1 npm run build/);
-  assert.doesNotMatch(packageJson, /"vinext"/);
-  assert.doesNotMatch(packageJson, /"vite"/);
+  assert.match(packageJson, /"build": "next build"/);
+  assert.match(packageJson, /"build:sites": "vinext build"/);
+  assert.match(packageJson, /"vinext"/);
+  assert.match(packageJson, /"vite"/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   assert.doesNotMatch(packageJson, /drizzle/);
   assert.match(apiRoute, /JOBVIS_API_BASE_URL/);
@@ -637,6 +709,8 @@ test("uses real route navigation and shared application state", async () => {
   assert.match(apiRoute, /handleMockJobvisApi/);
   assert.match(apiRoute, /x-jobvis-user-id/);
   assert.match(apiRoute, /API_MODE === "local"/);
+  assert.match(apiRoute, /API_MODE === "sites"/);
+  assert.match(apiRoute, /appendTrustedSiteGatewayHeaders/);
   assert.match(apiRoute, /LOOPBACK_API_HOSTS/);
   assert.match(apiRoute, /!isLoopbackApi\(\)/);
   assert.match(apiRoute, /PROXIED_RESOURCE_ROOTS/);
@@ -645,6 +719,8 @@ test("uses real route navigation and shared application state", async () => {
   assert.doesNotMatch(apiRoute, /request\.headers\.get\("authorization"\)/);
   assert.doesNotMatch(apiRoute, /request\.headers\.get\("cookie"\)/);
   assert.match(authApiRoute, /setSessionCookie/);
+  assert.match(authApiRoute, /usesTrustedSiteGateway/);
+  assert.match(authApiRoute, /appendTrustedSiteGatewayHeaders/);
   assert.match(authApiRoute, /retry-after/);
   assert.match(authApiRoute, /setSessionCookie\(response, session\.accessToken/);
   assert.doesNotMatch(authApiRoute, /NextResponse\.json\(session\)/);

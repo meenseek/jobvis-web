@@ -110,6 +110,28 @@ JOBVIS_API_MODE=mock NEXT_PUBLIC_JOBVIS_API_MODE=mock npm run dev
 JOBVIS_API_BASE_URL=http://127.0.0.1:8080 NEXT_PUBLIC_JOBVIS_API_MODE=api npm run dev
 ```
 
+private Sites 배포에서는 `JOBVIS_API_MODE=sites`를 사용합니다. Sites가 전달한
+`oai-authenticated-user-id`만 서버에서 읽고, Web과 API 양쪽에 같은 32바이트 이상의
+`JOBVIS_TRUSTED_SITE_SECRET`을 설정해 브라우저가 위조할 수 없는 서버 간 헤더로
+전달합니다. `NEXT_PUBLIC_JOBVIS_API_MODE=sites`도 함께 설정해 Sites가 소유한 인증을
+단일 로그인 경계로 사용합니다. 이 비밀은 `NEXT_PUBLIC_` 환경변수나 브라우저 응답에
+포함하지 않습니다. 첫 배포에서 발급된 HTTPS origin은 `JOBVIS_WEB_ORIGIN`에 설정해
+Open Graph와 X 미리보기 이미지의 절대 URL로 사용합니다.
+
+Sites 배포에는 다음 서버 환경변수를 함께 설정합니다.
+
+| 변수 | 값 |
+| --- | --- |
+| `JOBVIS_API_BASE_URL` | 모두의 AI 실험실 VM의 공개 API 주소(예: `https://api.jobvis.example`) |
+| `JOBVIS_API_MODE` | `sites` |
+| `NEXT_PUBLIC_JOBVIS_API_MODE` | `sites` |
+| `JOBVIS_TRUSTED_SITE_SECRET` | API `.env`와 동일한 서버 전용 비밀 |
+| `JOBVIS_WEB_ORIGIN` | 실제 Sites HTTPS origin |
+
+API 주소에는 `/api/v1`이나 마지막 `/`를 붙이지 않습니다. API의 CORS·OAuth redirect 설정도
+동일한 `JOBVIS_WEB_ORIGIN`을 사용하며, VM용 Compose와 백업·90일 이전 절차는
+`jobvis-api/deploy/lab/README.md`가 소유합니다.
+
 검증은 다음 명령으로 수행합니다.
 
 ```bash

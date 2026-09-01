@@ -68,7 +68,7 @@ const primaryNavItems = [
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { signOut, user } = useAuth();
+  const { canSignOut, signOut, user } = useAuth();
   const [loggingOut, setLoggingOut] = useState(false);
   const [logoutError, setLogoutError] = useState<string | null>(null);
   const [applicationCount, setApplicationCount] = useState(0);
@@ -333,16 +333,18 @@ export function AppShell({ children }: { children: ReactNode }) {
               <strong>{user?.displayName ?? "지원자님"}</strong>
               <small>{user?.primaryEmail ?? "개인 계정"}</small>
             </span>
-            <button
-              className={styles["profile-logout-button"]}
-              type="button"
-              onClick={() => void handleSignOut()}
-              disabled={loggingOut}
-              aria-label={loggingOut ? "로그아웃 중" : "로그아웃"}
-              title={loggingOut ? "로그아웃 중" : "로그아웃"}
-            >
-              <LogOut aria-hidden="true" />
-            </button>
+            {canSignOut ? (
+              <button
+                className={styles["profile-logout-button"]}
+                type="button"
+                onClick={() => void handleSignOut()}
+                disabled={loggingOut}
+                aria-label={loggingOut ? "로그아웃 중" : "로그아웃"}
+                title={loggingOut ? "로그아웃 중" : "로그아웃"}
+              >
+                <LogOut aria-hidden="true" />
+              </button>
+            ) : null}
           </div>
         </aside>
 

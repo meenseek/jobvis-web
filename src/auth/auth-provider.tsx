@@ -32,6 +32,7 @@ type AuthStatus =
   | "unavailable";
 
 type AuthContextValue = {
+  canSignOut: boolean;
   isAuthenticated: boolean;
   isDemoMode: boolean;
   status: AuthStatus;
@@ -53,6 +54,7 @@ type ApiAuthUser = components["schemas"]["AuthUser"];
 const MOCK_AUTH_STORAGE_KEY = "jobvis.mock-auth.user";
 const isMockMode = process.env.NEXT_PUBLIC_JOBVIS_API_MODE === "mock";
 const isLocalMode = process.env.NEXT_PUBLIC_JOBVIS_API_MODE === "local";
+const isSitesMode = process.env.NEXT_PUBLIC_JOBVIS_API_MODE === "sites";
 const isDemoMode = isMockMode || isLocalMode;
 const authBypass = process.env.NEXT_PUBLIC_JOBVIS_AUTH_BYPASS === "1";
 const bypassUser: AuthUser = {
@@ -141,7 +143,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (cancelled) return;
         if (response.status === 401) {
           setUser(null);
-          setStatus("unauthenticated");
+          setStatus(isSitesMode ? "unavailable" : "unauthenticated");
           return;
         }
         if (!response.ok) {
@@ -171,7 +173,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const expireSession = useCallback(() => {
     setUser(null);
-    setStatus("unauthenticated");
+    setStatus(isSitesMode ? "unavailable" : "unauthenticated");
   }, []);
 
   const retrySession = useCallback(() => {
@@ -196,6 +198,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<AuthContextValue>(
     () => ({
+      canSignOut: !isSitesMode,
       isAuthenticated: status === "authenticated",
       isDemoMode,
       status,

@@ -9,6 +9,12 @@ import {
   setSessionCookie,
 } from "@/src/auth/server-session";
 import type { components } from "@/src/contracts/jobvis-api.generated";
+import {
+  appendTrustedSiteGatewayHeaders,
+  TrustedSiteGatewayConfigurationError,
+  TrustedSiteIdentityRequiredError,
+  usesTrustedSiteGateway,
+} from "@/src/auth/trusted-site-gateway";
 
 type RouteContext = {
   params: Promise<{ action: string }>;
@@ -27,6 +33,7 @@ async function callAuthApi(
     const value = request.headers.get(name);
     if (value) headers.set(name, value);
   }
+  appendTrustedSiteGatewayHeaders(request, headers);
 
   return fetch(jobvisApiUrl(`/auth/${path}`), {
     ...init,
@@ -41,6 +48,20 @@ function unavailableResponse() {
     "Service Unavailable",
     "Jobvis API에 연결할 수 없습니다.",
   );
+}
+
+function gatewayErrorResponse(error: unknown) {
+  if (error instanceof TrustedSiteIdentityRequiredError) {
+    return problemResponse(401, "Unauthorized", "사이트 로그인이 필요합니다.");
+  }
+  if (error instanceof TrustedSiteGatewayConfigurationError) {
+    return problemResponse(
+      503,
+      "Service Unavailable",
+      "Sites 인증 연결이 준비되지 않았습니다.",
+    );
+  }
+  return unavailableResponse();
 }
 
 async function passThroughJson(response: Response) {
@@ -66,8 +87,8 @@ export async function GET(request: NextRequest, context: RouteContext) {
   if (action === "providers") {
     try {
       return passThroughJson(await callAuthApi(request, "providers"));
-    } catch {
-      return unavailableResponse();
+    } catch (error) {
+      return gatewayErrorResponse(error);
     }
   }
 
@@ -76,19 +97,21 @@ export async function GET(request: NextRequest, context: RouteContext) {
   }
 
   const token = sessionToken(request);
-  if (!token) {
+  if (!token && !usesTrustedSiteGateway()) {
     return problemResponse(401, "Unauthorized", "로그인이 필요합니다.");
   }
 
   try {
-    const upstream = await callAuthApi(request, "me", {
-      headers: { authorization: `Bearer ${token}` },
-    });
+    const upstream = await callAuthApi(
+      request,
+      "me",
+      token ? { headers: { authorization: `Bearer ${token}` } } : undefined,
+    );
     const response = await passThroughJson(upstream);
     if (upstream.status === 401) clearSessionCookie(response);
     return response;
-  } catch {
-    return unavailableResponse();
+  } catch (error) {
+    return gatewayErrorResponse(error);
   }
 }
 
@@ -106,8 +129,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
           body: await request.text(),
         }),
       );
-    } catch {
-      return unavailableResponse();
+    } catch (error) {
+      return gatewayErrorResponse(error);
     }
   }
 
@@ -144,8 +167,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
       });
       setSessionCookie(response, session.accessToken, expiresAt);
       return response;
-    } catch {
-      return unavailableResponse();
+    } catch (error) {
+      return gatewayErrorResponse(error);
     }
   }
 
