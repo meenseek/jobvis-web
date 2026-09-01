@@ -1,11 +1,12 @@
 "use client";
 
 import { Button } from "@measure-twice/react";
+import { GoogleSignInButton } from "./google-sign-in-button";
 import { useAuth } from "./auth-provider";
 import styles from "./auth.module.scss";
 
 export function AuthScreen() {
-  const { signIn } = useAuth();
+  const { isDemoMode, signInDemo } = useAuth();
 
   return (
     <main className={styles["auth-page"]} id="main-content">
@@ -31,19 +32,14 @@ export function AuthScreen() {
         </div>
 
         <div className={styles["auth-social-actions"]}>
+          <GoogleSignInButton />
           <Button
             tone="neutral"
             variant="outline"
-            onClick={() => signIn("google")}
+            disabled={!isDemoMode}
+            onClick={() => signInDemo("kakao")}
           >
-            Google로 시작하기
-          </Button>
-          <Button
-            tone="neutral"
-            variant="outline"
-            onClick={() => signIn("kakao")}
-          >
-            Kakao로 시작하기
+            {isDemoMode ? "Kakao로 시작하기" : "Kakao 로그인 준비 중"}
           </Button>
         </div>
 

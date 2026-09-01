@@ -1,9 +1,9 @@
-export type MailProvider = "gmail" | "naver";
+export type MailProvider = "gmail" | "outlook" | "naver";
 
 export type MailConnection = {
   provider: MailProvider;
   email: string;
-  lastSyncedAt: string;
+  lastSyncedAt: string | null;
 };
 
 export type AccountSettingsState = {
@@ -61,10 +61,13 @@ export function accountSettingsReducer(
 }
 
 export function mailProviderLabel(provider: MailProvider) {
-  return provider === "gmail" ? "Gmail" : "Naver";
+  if (provider === "gmail") return "Gmail";
+  if (provider === "outlook") return "Outlook";
+  return "Naver";
 }
 
-export function formatMailSyncTime(isoDate: string) {
+export function formatMailSyncTime(isoDate: string | null) {
+  if (!isoDate) return "동기화 전";
   return new Intl.DateTimeFormat("ko-KR", {
     timeZone: "Asia/Seoul",
     hour: "numeric",

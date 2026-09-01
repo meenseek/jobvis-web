@@ -1,13 +1,11 @@
-export type ApplicationStage =
-  | "applied"
-  | "screening"
-  | "interview"
-  | "offer";
+import type { components } from "../contracts/jobvis-api.generated";
 
+export type ApplicationStatus = components["schemas"]["ApplicationStatus"];
+export type ApplicationStage = Exclude<
+  ApplicationStatus,
+  "offered" | "rejected"
+>;
 export type ApplicationResult = "active" | "offered" | "rejected";
-export type ApplicationStatus =
-  | ApplicationStage
-  | Exclude<ApplicationResult, "active">;
 export type ApplicationDisplayStatus =
   | "review"
   | "application"
@@ -20,12 +18,7 @@ export type ApplicationProgressStatus = Exclude<
   ApplicationDisplayStatus,
   "review"
 >;
-export type ScheduleType =
-  | "application"
-  | "test"
-  | "interview"
-  | "followup"
-  | "other";
+export type ScheduleType = components["schemas"]["ScheduleType"];
 
 export type ApplicationEmail = {
   id: string;
@@ -72,6 +65,11 @@ export type Application = {
   emails: ApplicationEmail[];
   activities: ApplicationActivity[];
   changes: ApplicationChange[];
+  emailNextCursor?: number | null;
+  activityNextCursor?: number | null;
+  changeNextCursor?: number | null;
+  emailTotalCount?: number;
+  changeTotalCount?: number;
 };
 
 export const STAGE_OPTIONS: Array<{
@@ -80,6 +78,7 @@ export const STAGE_OPTIONS: Array<{
 }> = [
   { value: "applied", label: "지원 완료" },
   { value: "screening", label: "서류 검토" },
+  { value: "test", label: "과제·테스트" },
   { value: "interview", label: "면접 진행" },
   { value: "offer", label: "처우 협의" },
 ];
@@ -156,8 +155,9 @@ export function normalizeApplicationFilter(
 export const stageRank: Record<ApplicationStage, number> = {
   applied: 0,
   screening: 1,
-  interview: 2,
-  offer: 3,
+  test: 2,
+  interview: 3,
+  offer: 4,
 };
 
 export function stageLabel(application: Application) {
@@ -170,31 +170,52 @@ export function stageLabel(application: Application) {
 }
 
 export function getApplicationDisplayStatus(
-  application: Pick<
-    Application,
-    "needsReview" | "result" | "stage" | "scheduleType"
-  >,
+  application: Pick<Application, "needsReview" | "result" | "stage">,
 ): ApplicationDisplayStatus {
   if (application.needsReview) return "review";
   return getApplicationProgressStatus(application);
 }
 
+export function getDisplayStatusFromStatus(
+  status: ApplicationStatus,
+  needsReview = false,
+): ApplicationDisplayStatus {
+  if (needsReview) return "review";
+  if (status === "applied" || status === "screening") return "application";
+  return status;
+}
+
+export function applicationStatusDisplayLabel(
+  status: ApplicationStatus,
+  needsReview = false,
+) {
+  const displayStatus = getDisplayStatusFromStatus(status, needsReview);
+  return (
+    DISPLAY_STATUS_OPTIONS.find((option) => option.value === displayStatus)
+      ?.label ?? "지원·서류"
+  );
+}
+
+export function applicationStatusTone(
+  status: ApplicationStatus,
+  needsReview = false,
+) {
+  return getDisplayStatusFromStatus(status, needsReview);
+}
+
 export function getApplicationProgressStatus(
-  application: Pick<Application, "result" | "stage" | "scheduleType">,
+  application: Pick<Application, "result" | "stage">,
 ): ApplicationProgressStatus {
   if (application.result === "offered") return "offered";
   if (application.result === "rejected") return "rejected";
   if (application.stage === "offer") return "offer";
   if (application.stage === "interview") return "interview";
-  if (application.scheduleType === "test") return "test";
+  if (application.stage === "test") return "test";
   return "application";
 }
 
 export function applicationDisplayStatusLabel(
-  application: Pick<
-    Application,
-    "needsReview" | "result" | "stage" | "scheduleType"
-  >,
+  application: Pick<Application, "needsReview" | "result" | "stage">,
 ) {
   const displayStatus = getApplicationDisplayStatus(application);
   return (
@@ -204,7 +225,7 @@ export function applicationDisplayStatusLabel(
 }
 
 export function applicationProgressStatusLabel(
-  application: Pick<Application, "result" | "stage" | "scheduleType">,
+  application: Pick<Application, "result" | "stage">,
 ) {
   const displayStatus = getApplicationProgressStatus(application);
   return (
@@ -214,7 +235,7 @@ export function applicationProgressStatusLabel(
 }
 
 export function applicationProgressStatusBadgeTone(
-  application: Pick<Application, "result" | "stage" | "scheduleType">,
+  application: Pick<Application, "result" | "stage">,
 ) {
   return getApplicationProgressStatus(application);
 }
@@ -222,9 +243,7 @@ export function applicationProgressStatusBadgeTone(
 export function progressStatusToApplicationStatus(
   progressStatus: ApplicationProgressStatus,
 ): ApplicationStatus {
-  if (progressStatus === "application" || progressStatus === "test") {
-    return "screening";
-  }
+  if (progressStatus === "application") return "screening";
   return progressStatus;
 }
 
@@ -232,27 +251,16 @@ export function transitionProgressStatus(
   application: Application,
   progressStatus: ApplicationProgressStatus,
 ): Application {
-  const transitioned = transitionStatus(
+  return transitionStatus(
     application,
     progressStatusToApplicationStatus(progressStatus),
   );
-
-  if (progressStatus === "test") {
-    return { ...transitioned, scheduleType: "test" };
-  }
-
-  if (progressStatus === "application" && transitioned.scheduleType === "test") {
-    return { ...transitioned, scheduleType: "application" };
-  }
-
-  return transitioned;
 }
 
 export function applicationStatusBadgeTone(application: {
   stage: ApplicationStage;
   result: ApplicationResult;
   needsReview: boolean;
-  scheduleType: ScheduleType;
 }) {
   return getApplicationDisplayStatus(application);
 }
@@ -274,7 +282,6 @@ export function transitionStatus(
       highestStageReached: "offer",
       screeningPassed: true,
       result: "offered",
-      needsReview: false,
     };
   }
 
@@ -282,7 +289,6 @@ export function transitionStatus(
     return {
       ...application,
       result: "rejected",
-      needsReview: false,
     };
   }
 
@@ -297,7 +303,6 @@ export function transitionStatus(
     screeningPassed:
       application.screeningPassed || stageRank[status] >= stageRank.interview,
     result: "active",
-    needsReview: false,
   };
 }
 
@@ -475,8 +480,8 @@ const demoApplications: Array<Omit<Application, "version" | "changes">> = [
     location: "서울 성동구",
     employmentType: "정규직",
     appliedAt: "2026-08-13",
-    stage: "screening",
-    highestStageReached: "screening",
+    stage: "test",
+    highestStageReached: "test",
     screeningPassed: true,
     result: "active",
     needsReview: false,
@@ -499,7 +504,7 @@ const demoApplications: Array<Omit<Application, "version" | "changes">> = [
       {
         id: "musinsa-activity-1",
         type: "status",
-        title: "서류 검토 단계로 변경되었습니다",
+        title: "과제·테스트 단계로 변경되었습니다",
         description: "코딩 테스트 안내 메일과 자동으로 연결했습니다.",
         occurredAt: "2026-08-16T09:12:00+09:00",
       },

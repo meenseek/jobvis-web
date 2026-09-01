@@ -3,109 +3,245 @@
 import {
   createContext,
   ReactNode,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
   useState,
 } from "react";
+import type { components } from "../contracts/jobvis-api.generated";
 
-export type AuthProviderId = "google" | "kakao" | "email";
+export type AuthProviderId = components["schemas"]["LoginProvider"];
 
 export type AuthUser = {
+  id: string;
   displayName: string;
   primaryEmail: string;
-  provider: AuthProviderId;
 };
+
+export type LoginChallenge = components["schemas"]["LoginChallenge"];
+type CreateLoginChallengeRequest =
+  components["schemas"]["CreateLoginChallengeRequest"];
+type ExchangeIdentityTokenRequest =
+  components["schemas"]["ExchangeIdentityTokenRequest"];
+
+type AuthStatus =
+  | "loading"
+  | "authenticated"
+  | "unauthenticated"
+  | "unavailable";
 
 type AuthContextValue = {
   isAuthenticated: boolean;
-  isMockMode: boolean;
+  isDemoMode: boolean;
+  status: AuthStatus;
   user: AuthUser | null;
-  signIn: (provider: AuthProviderId, email?: string) => void;
-  signOut: () => void;
+  createChallenge: (provider: AuthProviderId) => Promise<LoginChallenge>;
+  expireSession: () => void;
+  exchangeIdentityToken: (
+    provider: AuthProviderId,
+    idToken: string,
+    challenge: LoginChallenge,
+  ) => Promise<void>;
+  signInDemo: (provider: AuthProviderId) => void;
+  retrySession: () => void;
+  signOut: () => Promise<void>;
 };
 
-const AUTH_STORAGE_KEY = "jobvis.auth.user";
+type ApiAuthUser = components["schemas"]["AuthUser"];
+
+const MOCK_AUTH_STORAGE_KEY = "jobvis.mock-auth.user";
 const isMockMode = process.env.NEXT_PUBLIC_JOBVIS_API_MODE === "mock";
+const isLocalMode = process.env.NEXT_PUBLIC_JOBVIS_API_MODE === "local";
+const isDemoMode = isMockMode || isLocalMode;
 const authBypass = process.env.NEXT_PUBLIC_JOBVIS_AUTH_BYPASS === "1";
 const bypassUser: AuthUser = {
+  id: "demo-user",
   displayName: "데모 사용자",
   primaryEmail: "demo@jobvis.example",
-  provider: "google",
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-function readStoredUser() {
+function normalizeUser(user: ApiAuthUser): AuthUser {
+  return {
+    id: user.id,
+    displayName: user.displayName?.trim() || "지원자님",
+    primaryEmail: user.primaryEmail?.trim() || "개인 계정",
+  };
+}
+
+function readStoredDemoUser() {
   try {
-    const raw = window.localStorage.getItem(AUTH_STORAGE_KEY);
+    const raw = window.localStorage.getItem(MOCK_AUTH_STORAGE_KEY);
     return raw ? (JSON.parse(raw) as AuthUser) : null;
   } catch {
     return null;
   }
 }
 
-function storeUser(user: AuthUser | null) {
+function storeDemoUser(user: AuthUser | null) {
   if (!user) {
-    window.localStorage.removeItem(AUTH_STORAGE_KEY);
+    window.localStorage.removeItem(MOCK_AUTH_STORAGE_KEY);
     return;
   }
-  window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(user));
+  window.localStorage.setItem(MOCK_AUTH_STORAGE_KEY, JSON.stringify(user));
 }
 
-function createDemoUser(provider: AuthProviderId, email?: string): AuthUser {
-  if (provider === "kakao") {
-    return {
-      displayName: "카카오 데모 사용자",
-      primaryEmail: email?.trim() || "mock.kakao@jobvis.example",
-      provider,
-    };
-  }
+function createDemoUser(provider: AuthProviderId): AuthUser {
+  return provider === "kakao"
+    ? {
+        id: "mock-kakao-user",
+        displayName: "카카오 데모 사용자",
+        primaryEmail: "mock.kakao@jobvis.example",
+      }
+    : {
+        id: "mock-google-user",
+        displayName: "구글 데모 사용자",
+        primaryEmail: "mock.google@jobvis.example",
+      };
+}
 
-  if (provider === "google") {
-    return {
-      displayName: "구글 데모 사용자",
-      primaryEmail: email?.trim() || "mock.google@jobvis.example",
-      provider,
-    };
-  }
-
-  return {
-    displayName: "지원자님",
-    primaryEmail: email?.trim() || "mock.email@jobvis.example",
-    provider,
-  };
+async function responseMessage(response: Response) {
+  const body = (await response.json().catch(() => null)) as {
+    detail?: string;
+    message?: string;
+  } | null;
+  return (
+    body?.detail ||
+    body?.message ||
+    `인증 요청에 실패했습니다. (${response.status})`
+  );
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const [status, setStatus] = useState<AuthStatus>(
+    authBypass ? "authenticated" : "loading",
+  );
   const [user, setUser] = useState<AuthUser | null>(
     authBypass ? bypassUser : null,
   );
+  const [restoreAttempt, setRestoreAttempt] = useState(0);
 
   useEffect(() => {
     if (authBypass) return;
-    const frame = requestAnimationFrame(() => {
-      setUser(readStoredUser());
-    });
-    return () => cancelAnimationFrame(frame);
+
+    let cancelled = false;
+    async function restoreSession() {
+      if (isDemoMode) {
+        const storedUser = readStoredDemoUser();
+        if (cancelled) return;
+        setUser(storedUser);
+        setStatus(storedUser ? "authenticated" : "unauthenticated");
+        return;
+      }
+
+      try {
+        const response = await fetch("/api/auth/me", { cache: "no-store" });
+        if (cancelled) return;
+        if (response.status === 401) {
+          setUser(null);
+          setStatus("unauthenticated");
+          return;
+        }
+        if (!response.ok) {
+          setUser(null);
+          setStatus("unavailable");
+          return;
+        }
+
+        const restoredUser = normalizeUser(
+          (await response.json()) as ApiAuthUser,
+        );
+        if (cancelled) return;
+        setUser(restoredUser);
+        setStatus("authenticated");
+      } catch {
+        if (cancelled) return;
+        setUser(null);
+        setStatus("unavailable");
+      }
+    }
+
+    void restoreSession();
+    return () => {
+      cancelled = true;
+    };
+  }, [restoreAttempt]);
+
+  const expireSession = useCallback(() => {
+    setUser(null);
+    setStatus("unauthenticated");
+  }, []);
+
+  const retrySession = useCallback(() => {
+    setUser(null);
+    setStatus("loading");
+    setRestoreAttempt((attempt) => attempt + 1);
+  }, []);
+
+  const signOut = useCallback(async () => {
+    if (isDemoMode) {
+      storeDemoUser(null);
+    } else {
+      const response = await fetch("/api/auth/logout", {
+        method: "POST",
+        keepalive: true,
+      });
+      if (!response.ok) throw new Error(await responseMessage(response));
+    }
+    setUser(null);
+    setStatus("unauthenticated");
   }, []);
 
   const value = useMemo<AuthContextValue>(
     () => ({
-      isAuthenticated: Boolean(user),
-      isMockMode,
+      isAuthenticated: status === "authenticated",
+      isDemoMode,
+      status,
       user,
-      signIn(provider, email) {
-        const nextUser = createDemoUser(provider, email);
+      expireSession,
+      async createChallenge(provider) {
+        const response = await fetch("/api/auth/challenges", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(
+            { provider } satisfies CreateLoginChallengeRequest,
+          ),
+        });
+        if (!response.ok) throw new Error(await responseMessage(response));
+        return (await response.json()) as LoginChallenge;
+      },
+      async exchangeIdentityToken(provider, idToken, challenge) {
+        const response = await fetch("/api/auth/exchange", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(
+            {
+              provider,
+              idToken,
+              challengeToken: challenge.challengeToken,
+              nonce: challenge.nonce,
+            } satisfies ExchangeIdentityTokenRequest,
+          ),
+        });
+        if (!response.ok) throw new Error(await responseMessage(response));
+
+        const session = (await response.json()) as { user: ApiAuthUser };
+        setUser(normalizeUser(session.user));
+        setStatus("authenticated");
+      },
+      signInDemo(provider) {
+        if (!isDemoMode) return;
+        const nextUser = createDemoUser(provider);
         setUser(nextUser);
-        storeUser(nextUser);
+        setStatus("authenticated");
+        storeDemoUser(nextUser);
       },
-      signOut() {
-        setUser(null);
-        storeUser(null);
-      },
+      retrySession,
+      signOut,
     }),
-    [user],
+    [expireSession, retrySession, signOut, status, user],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

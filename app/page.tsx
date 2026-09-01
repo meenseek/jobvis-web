@@ -1,4 +1,3 @@
-import { seoulDateKey } from "@/src/applications/application-data";
 import HomeClientPage from "@/src/home/home-client-page";
 
 const seoulFullDateFormatter = new Intl.DateTimeFormat("ko-KR", {
@@ -7,9 +6,8 @@ const seoulFullDateFormatter = new Intl.DateTimeFormat("ko-KR", {
 });
 
 export default function HomePage() {
-  const now = new Date();
-  const today = seoulDateKey(now);
-  const todayLabel = seoulFullDateFormatter.format(now);
+	const now = new Date();
+	const todayLabel = seoulFullDateFormatter.format(now);
 
-  return <HomeClientPage today={today} todayLabel={todayLabel} />;
+	return <HomeClientPage todayLabel={todayLabel} />;
 }

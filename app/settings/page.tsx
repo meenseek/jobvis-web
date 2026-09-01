@@ -34,21 +34,28 @@ function inferMailProvider(email: string): MailProvider | null {
 export default function SettingsPage() {
   const {
     autoSyncEnabled,
-    connectMail,
+    busyAction,
+    capabilities,
+    connectNaver,
     disconnectMail,
+    errorMessage,
+    latestImportRun,
     mailConnection,
+    resumeMonitoring,
     setAutoSyncEnabled,
+    startOAuth,
     syncMail,
   } = useAccountSettings();
   const [connectDialogOpen, setConnectDialogOpen] = useState(false);
   const [mailAddress, setMailAddress] = useState("");
+  const [naverAppPassword, setNaverAppPassword] = useState("");
   const [disconnectDialogOpen, setDisconnectDialogOpen] = useState(false);
   const [consentChecked, setConsentChecked] = useState(false);
   const lastMailSyncTime = mailConnection
     ? formatMailSyncTime(mailConnection.lastSyncedAt)
     : null;
   const connectedMailProviderName = mailConnection
-    ? mailProviderLabel(mailConnection.provider)
+    ? mailProviderLabel(mailConnection.provider as MailProvider)
     : null;
   const inferredMailProvider = inferMailProvider(mailAddress);
   const inferredMailProviderName = inferredMailProvider
@@ -60,7 +67,27 @@ export default function SettingsPage() {
       ? `${inferredMailProviderName} 메일로 연결을 진행합니다.`
       : "현재 Gmail과 Naver 메일만 지원합니다."
     : "현재 Gmail과 Naver 메일만 지원합니다.";
-  const canConfirmConnection = Boolean(inferredMailProvider) && consentChecked;
+  const inferredCapability = capabilities.find(
+    (capability) => capability.provider === inferredMailProvider,
+  );
+  const capabilityNotes = inferredCapability?.notes.join(" ") ?? "";
+  const canConfirmConnection = Boolean(
+    inferredMailProvider &&
+      consentChecked &&
+      (inferredCapability?.available ??
+        process.env.NEXT_PUBLIC_JOBVIS_API_MODE === "mock") &&
+      (inferredMailProvider !== "naver" || naverAppPassword.trim()),
+  );
+  const naverMigrationRequired = Boolean(
+    mailConnection?.provider === "naver" &&
+      mailConnection.lastErrorCode === "NAVER_LEDGER_MIGRATION_REQUIRED",
+  );
+  const connectionReady =
+    mailConnection?.status === "connected" && !naverMigrationRequired;
+  const importRunActive = Boolean(
+    latestImportRun &&
+      (latestImportRun.status === "queued" || latestImportRun.status === "running"),
+  );
 
   useEffect(() => {
     if (mailConnection) return;
@@ -80,21 +107,25 @@ export default function SettingsPage() {
     setConnectDialogOpen(false);
     setConsentChecked(false);
     setMailAddress("");
+    setNaverAppPassword("");
   }
 
   function openConnectDialog() {
     setConnectDialogOpen(true);
   }
 
-  function confirmConnection() {
+  async function confirmConnection() {
     if (!canConfirmConnection || !inferredMailProvider) return;
-    connectMail(inferredMailProvider, trimmedMailAddress);
-    closeConnectDialog();
+    const naverPassword = naverAppPassword;
+    setNaverAppPassword("");
+    const connected = inferredMailProvider === "gmail"
+      ? await startOAuth("gmail")
+      : await connectNaver(trimmedMailAddress, naverPassword);
+    if (connected && inferredMailProvider === "naver") closeConnectDialog();
   }
 
-  function confirmDisconnection() {
-    disconnectMail();
-    setDisconnectDialogOpen(false);
+  async function confirmDisconnection() {
+    if (await disconnectMail()) setDisconnectDialogOpen(false);
   }
 
   return (
@@ -105,6 +136,15 @@ export default function SettingsPage() {
           <p>채용 메일 연결과 권한 사용 범위를 관리하세요.</p>
         </div>
       </section>
+
+      {errorMessage ? (
+        <CalloutBanner
+          className={styles["settings-callout"]}
+          title="요청을 완료하지 못했습니다"
+        >
+          {errorMessage}
+        </CalloutBanner>
+      ) : null}
 
       <CalloutBanner
         className={styles["settings-callout"]}
@@ -138,15 +178,23 @@ export default function SettingsPage() {
                 <h2>채용 메일 연결</h2>
                 <StatusIndicator tone={mailConnection ? "success" : "neutral"}>
                   {mailConnection
-                    ? `${connectedMailProviderName} 연결됨`
+                    ? mailConnection.status === "connected"
+                      ? `${connectedMailProviderName} 연결됨`
+                      : mailConnection.status === "reauthorization_required"
+                        ? "재승인 필요"
+                        : "확인 필요"
                     : "연결 안 됨"}
                 </StatusIndicator>
               </div>
               {mailConnection ? (
                 <>
-                  <p>{connectedMailProviderName} 메일을 확인하고 있어요.</p>
+                  <p>
+                    {naverMigrationRequired
+                      ? "기존 Naver 메일 처리 기록의 운영자 확인이 필요합니다. 확인 전에는 동기화할 수 없습니다."
+                      : `${connectedMailProviderName} 메일을 확인하고 있어요.`}
+                  </p>
                   <small>
-                    {mailConnection.email} · 마지막 동기화 {lastMailSyncTime}
+                    {mailConnection.accountEmail} · 마지막 동기화 {lastMailSyncTime}
                   </small>
                 </>
               ) : (
@@ -159,14 +207,45 @@ export default function SettingsPage() {
           </div>
           <div className={styles["settings-row-actions"]}>
             {mailConnection ? (
-              <Button
-                size="sm"
-                tone="danger"
-                variant="ghost"
-                onClick={() => setDisconnectDialogOpen(true)}
-              >
-                연결 해제
-              </Button>
+              <>
+                {mailConnection.status !== "connected" &&
+                mailConnection.provider !== "naver" ? (
+                  <Button
+                    size="sm"
+                    tone="neutral"
+                    variant="outline"
+                    disabled={busyAction !== null}
+                    onClick={() =>
+                      void startOAuth(mailConnection.provider as "gmail" | "outlook")
+                    }
+                  >
+                    재승인
+                  </Button>
+                ) : null}
+                {mailConnection.status !== "connected" &&
+                mailConnection.provider === "naver" &&
+                mailConnection.lastErrorCode !==
+                  "NAVER_LEDGER_MIGRATION_REQUIRED" ? (
+                  <Button
+                    size="sm"
+                    tone="neutral"
+                    variant="outline"
+                    disabled={busyAction !== null}
+                    onClick={openConnectDialog}
+                  >
+                    앱 비밀번호 재입력
+                  </Button>
+                ) : null}
+                <Button
+                  size="sm"
+                  tone="danger"
+                  variant="ghost"
+                  disabled={busyAction !== null}
+                  onClick={() => setDisconnectDialogOpen(true)}
+                >
+                  연결 해제
+                </Button>
+              </>
             ) : (
               <Button size="sm" onClick={openConnectDialog}>
                 연결하기
@@ -187,16 +266,20 @@ export default function SettingsPage() {
                   tone={
                     !mailConnection
                       ? "neutral"
-                      : autoSyncEnabled
+                      : mailConnection.monitoringPaused
+                        ? "warning"
+                        : autoSyncEnabled
                         ? "success"
                         : "warning"
                   }
                 >
                   {!mailConnection
                     ? "연결 필요"
-                    : autoSyncEnabled
-                      ? "자동 동기화"
-                      : "수동 동기화"}
+                    : mailConnection.monitoringPaused
+                      ? "자동 확인 일시 중지"
+                      : autoSyncEnabled
+                        ? "자동 동기화"
+                        : "수동 동기화"}
                 </StatusIndicator>
               </div>
               {mailConnection ? (
@@ -207,6 +290,18 @@ export default function SettingsPage() {
                       : "자동 확인은 멈추고 필요할 때만 직접 동기화합니다."}
                   </p>
                   <small>마지막 동기화 {lastMailSyncTime}</small>
+                  {latestImportRun?.status === "failed" ? (
+                    <small>
+                      최근 동기화 실패
+                      {latestImportRun.errorCode
+                        ? ` · ${latestImportRun.errorCode}`
+                        : ""}
+                    </small>
+                  ) : latestImportRun?.status === "cancelled" ? (
+                    <small>최근 동기화가 취소되었습니다.</small>
+                  ) : importRunActive ? (
+                    <small>메일 동기화를 진행하고 있습니다.</small>
+                  ) : null}
                 </>
               ) : (
                 <>
@@ -225,18 +320,39 @@ export default function SettingsPage() {
             <Checkbox
               label="자동 동기화"
               checked={autoSyncEnabled}
-              disabled={!mailConnection}
+              disabled={
+                !connectionReady || busyAction !== null || importRunActive
+              }
               wrapperClassName={styles["settings-sync-checkbox"]}
-              onChange={(event) => setAutoSyncEnabled(event.target.checked)}
+              onChange={(event) =>
+                void setAutoSyncEnabled(event.target.checked)
+              }
             />
+            {mailConnection?.monitoringPaused ? (
+              <Button
+                size="sm"
+                tone="neutral"
+                variant="outline"
+                disabled={
+                  !connectionReady || busyAction !== null || importRunActive
+                }
+                onClick={() => void resumeMonitoring()}
+              >
+                자동 확인 재개
+              </Button>
+            ) : null}
             <Button
               size="sm"
               tone="neutral"
               variant="outline"
-              disabled={!mailConnection}
-              onClick={syncMail}
+              disabled={
+                !connectionReady || busyAction !== null || importRunActive
+              }
+              onClick={() => void syncMail()}
             >
-              수동 동기화
+              {busyAction === "sync" || importRunActive
+                ? "동기화 중"
+                : "수동 동기화"}
             </Button>
           </div>
         </article>
@@ -272,6 +388,16 @@ export default function SettingsPage() {
             value={mailAddress}
             onChange={(event) => setMailAddress(event.target.value)}
           />
+          {inferredMailProvider === "naver" ? (
+            <TextField
+              label="Naver 앱 비밀번호"
+              type="password"
+              autoComplete="off"
+              value={naverAppPassword}
+              onChange={(event) => setNaverAppPassword(event.target.value)}
+              required
+            />
+          ) : null}
           <p
             className={
               trimmedMailAddress && !inferredMailProvider
@@ -282,7 +408,9 @@ export default function SettingsPage() {
                 : styles["settings-dialog-hint"]
             }
           >
-            {mailProviderMessage}
+            {inferredCapability?.available === false && capabilityNotes
+              ? capabilityNotes
+              : mailProviderMessage}
           </p>
           <Checkbox
             label="채용 메일 연결 안내를 확인했어요"
@@ -301,8 +429,13 @@ export default function SettingsPage() {
           <Button tone="neutral" variant="ghost" onClick={closeConnectDialog}>
             취소
           </Button>
-          <Button disabled={!canConfirmConnection} onClick={confirmConnection}>
-            동의하고 연결
+          <Button
+            disabled={!canConfirmConnection || busyAction !== null}
+            onClick={() => void confirmConnection()}
+          >
+            {busyAction === "connect" || busyAction === "oauth"
+              ? "연결 중"
+              : "동의하고 연결"}
           </Button>
         </DialogActions>
       </Dialog>
@@ -328,8 +461,12 @@ export default function SettingsPage() {
           >
             취소
           </Button>
-          <Button tone="danger" onClick={confirmDisconnection}>
-            연결 해제
+          <Button
+            tone="danger"
+            disabled={busyAction !== null}
+            onClick={() => void confirmDisconnection()}
+          >
+            {busyAction === "disconnect" ? "해제 중" : "연결 해제"}
           </Button>
         </DialogActions>
       </Dialog>

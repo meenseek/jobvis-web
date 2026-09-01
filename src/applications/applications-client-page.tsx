@@ -9,24 +9,33 @@ import {
 } from "@measure-twice/react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 import {
   applicationDetailPath,
   applicationListPath,
 } from "@/src/applications/application-navigation";
-import { useApplications } from "@/src/applications/application-provider";
+import {
+  invalidateJobvisApplications,
+  JOBVIS_APPLICATIONS_INVALIDATED,
+} from "@/src/api/jobvis-data-events";
+import {
+  completeAllApplicationReviews,
+  createApplication,
+  fetchApplicationPage,
+  type ApplicationPage,
+} from "@/src/applications/jobvis-api-client";
 import {
   ApplicationFilter,
   ApplicationStage,
-  applicationDisplayStatusLabel,
-  applicationStatusBadgeTone,
+  applicationStatusDisplayLabel,
+  applicationStatusTone,
   DISPLAY_STATUS_OPTIONS,
-  filterApplications,
   fullDate,
   normalizeApplicationFilter,
   STAGE_OPTIONS,
 } from "@/src/applications/application-data";
 import { cn } from "@/src/ui/class-names";
+import { MutationAttemptRegistry } from "@/src/api/mutation-attempts";
 import styles from "./applications.module.scss";
 
 function ApplicationFilters({
@@ -89,7 +98,6 @@ export default function ApplicationsClientPage({
   initialQuery,
   initialFilter,
 }: ApplicationsClientPageProps) {
-  const { applications, addApplication, markReviewed } = useApplications();
   const router = useRouter();
   const query = initialQuery;
   const filter = initialFilter;
@@ -99,22 +107,65 @@ export default function ApplicationsClientPage({
   const [company, setCompany] = useState("");
   const [position, setPosition] = useState("");
   const [stage, setStage] = useState<ApplicationStage>("applied");
-
-  const filteredApplications = useMemo(
-    () => filterApplications(applications, query, filter),
-    [applications, filter, query],
-  );
-  const reviewCount = applications.filter(
-    (application) => application.needsReview,
-  ).length;
-  const reviewApplicationIds = useMemo(
-    () =>
-      applications
-        .filter((application) => application.needsReview)
-        .map((application) => application.id),
-    [applications],
-  );
+  const [pageData, setPageData] = useState<ApplicationPage | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [mutationAttempts] = useState(() => new MutationAttemptRegistry());
+  const applications = pageData?.items ?? [];
+  const reviewCount = pageData?.needsReviewCount ?? 0;
   const currentListPath = applicationListPath(query, filter);
+
+  const loadPage = useCallback(
+    async (
+      page = 0,
+      append = false,
+      signal?: AbortSignal,
+    ): Promise<ApplicationPage | null> => {
+      setLoading(true);
+      try {
+        const response = await fetchApplicationPage(
+          query,
+          filter,
+          page,
+          100,
+          signal,
+        );
+        setPageData((current) =>
+          append && current
+            ? { ...response, items: [...current.items, ...response.items] }
+            : response,
+        );
+        setErrorMessage(null);
+        return response;
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return null;
+        }
+        setErrorMessage(
+          error instanceof Error ? error.message : "지원 목록을 불러오지 못했습니다.",
+        );
+        return null;
+      } finally {
+        setLoading(false);
+      }
+    },
+    [filter, query],
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const frame = requestAnimationFrame(() => void loadPage(0, false, controller.signal));
+    return () => {
+      cancelAnimationFrame(frame);
+      controller.abort();
+    };
+  }, [loadPage]);
+
+  useEffect(() => {
+    const reload = () => void loadPage();
+    window.addEventListener(JOBVIS_APPLICATIONS_INVALIDATED, reload);
+    return () => window.removeEventListener(JOBVIS_APPLICATIONS_INVALIDATED, reload);
+  }, [loadPage]);
 
   function updateList(nextQuery: string, nextFilter: ApplicationFilter) {
     router.replace(applicationListPath(nextQuery, nextFilter));
@@ -123,7 +174,20 @@ export default function ApplicationsClientPage({
   async function handleAddApplication(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!company.trim() || !position.trim()) return;
-    const id = await addApplication({ company, position, stage });
+    const key = "create-application";
+    const mutationId = mutationAttempts.idFor(key, [company, position, stage]);
+    let id: string;
+    try {
+      id = (await createApplication({ company, position, stage }, mutationId)).id;
+      mutationAttempts.clear(key, mutationId);
+      invalidateJobvisApplications();
+    } catch (error) {
+      await loadPage();
+      setErrorMessage(
+        error instanceof Error ? error.message : "지원 이력을 추가하지 못했습니다.",
+      );
+      return;
+    }
     setCompany("");
     setPosition("");
     setStage("applied");
@@ -132,11 +196,34 @@ export default function ApplicationsClientPage({
   }
 
   async function handleBulkReviewComplete() {
-    if (!reviewApplicationIds.length || bulkReviewing) return;
+    if (!reviewCount || !pageData || bulkReviewing) return;
     setBulkReviewing(true);
+    const expectedReviewRevision = pageData.reviewRevision;
+    const key = "complete-bulk-review";
+    const mutationId = mutationAttempts.idFor(key, [expectedReviewRevision]);
     try {
-      await Promise.all(reviewApplicationIds.map((id) => markReviewed(id)));
+      await completeAllApplicationReviews(
+        expectedReviewRevision,
+        mutationId,
+      );
+      mutationAttempts.clear(key, mutationId);
+      invalidateJobvisApplications();
+      await loadPage();
       setBulkReviewDialogOpen(false);
+    } catch (error) {
+      const recoveredPage = await loadPage();
+      const reviewStateChanged =
+        recoveredPage !== null &&
+        recoveredPage.reviewRevision !== expectedReviewRevision;
+      if (reviewStateChanged) mutationAttempts.clear(key, mutationId);
+      if (reviewStateChanged && recoveredPage.needsReviewCount === 0) {
+        invalidateJobvisApplications();
+        setBulkReviewDialogOpen(false);
+        return;
+      }
+      setErrorMessage(
+        error instanceof Error ? error.message : "일괄 확인을 완료하지 못했습니다.",
+      );
     } finally {
       setBulkReviewing(false);
     }
@@ -150,6 +237,15 @@ export default function ApplicationsClientPage({
           styles["applications-page-heading"],
         )}
       >
+        {errorMessage ? (
+          <div className="empty-state" role="alert">
+            <strong>지원 목록을 불러오지 못했습니다.</strong>
+            <p>{errorMessage}</p>
+            <Button tone="neutral" variant="outline" onClick={() => loadPage()}>
+              다시 시도
+            </Button>
+          </div>
+        ) : null}
         <div>
           <h1>지원 현황</h1>
           <p>회사·포지션·상태를 비교하고 확인할 지원 건을 정리하세요.</p>
@@ -181,7 +277,7 @@ export default function ApplicationsClientPage({
                 onClick={() => updateList(query, "all")}
               >
                 <span>전체 지원</span>
-                <strong>{applications.length}</strong>
+                <strong>{pageData?.totalCount ?? 0}</strong>
               </button>
               <button
                 type="button"
@@ -224,12 +320,15 @@ export default function ApplicationsClientPage({
               </tr>
             </thead>
             <tbody>
-              {filteredApplications.map((application) => {
+              {applications.map((application) => {
                 const detailPath = applicationDetailPath(
                   application.id,
                   currentListPath,
                 );
-                const statusText = applicationDisplayStatusLabel(application);
+                const statusText = applicationStatusDisplayLabel(
+                  application.status,
+                  application.needsReview,
+                );
 
                 return (
                   <tr
@@ -270,8 +369,9 @@ export default function ApplicationsClientPage({
                       <span
                         className={cn(
                           "status-badge",
-                          `status-badge--${applicationStatusBadgeTone(
-                            application,
+                          `status-badge--${applicationStatusTone(
+                            application.status,
+                            application.needsReview,
                           )}`,
                         )}
                       >
@@ -289,7 +389,7 @@ export default function ApplicationsClientPage({
               })}
             </tbody>
           </table>
-          {filteredApplications.length === 0 ? (
+          {!loading && applications.length === 0 ? (
             <div className="empty-state">
               <strong>조건에 맞는 지원 이력이 없습니다.</strong>
               <p>검색어나 진행 상태를 바꿔보세요.</p>
@@ -297,8 +397,22 @@ export default function ApplicationsClientPage({
           ) : null}
         </div>
         <footer className={styles["table-footer"]}>
-          <span>{filteredApplications.length}개 이력 표시 중</span>
-          <span>메일 원문 연결 정보 포함</span>
+          <span>
+            {applications.length}개 / {pageData?.filteredCount ?? 0}개 이력 표시 중
+          </span>
+          {pageData?.hasNext ? (
+            <Button
+              size="sm"
+              tone="neutral"
+              variant="ghost"
+              disabled={loading}
+              onClick={() => loadPage(pageData.page + 1, true)}
+            >
+              더 보기
+            </Button>
+          ) : (
+            <span>메일 원문 연결 정보 포함</span>
+          )}
         </footer>
       </section>
 
@@ -359,9 +473,7 @@ export default function ApplicationsClientPage({
           <Select
             label="진행 상태"
             value={stage}
-            onChange={(event) =>
-              setStage(event.target.value as ApplicationStage)
-            }
+            onChange={(event) => setStage(event.target.value as ApplicationStage)}
           >
             {STAGE_OPTIONS.map((option) => (
               <option value={option.value} key={option.value}>

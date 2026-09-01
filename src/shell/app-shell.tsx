@@ -1,6 +1,6 @@
 "use client";
 
-import { SkipLink } from "@measure-twice/react";
+import { Button, SkipLink } from "@measure-twice/react";
 import {
   BriefcaseBusiness,
   CalendarDays,
@@ -21,6 +21,8 @@ import {
   safeApplicationListPath,
 } from "../applications/application-navigation";
 import { useApplications } from "../applications/application-provider";
+import { fetchApplicationCounts } from "../applications/jobvis-api-client";
+import { JOBVIS_APPLICATIONS_INVALIDATED } from "../api/jobvis-data-events";
 import {
   closeOpenApplicationTab,
   type OpenApplicationTab,
@@ -29,8 +31,10 @@ import {
 import {
   formatMailSyncTime,
   mailProviderLabel,
+  type MailProvider,
 } from "../settings/settings-state";
 import { cn } from "../ui/class-names";
+import { CalloutBanner } from "../ui/callout-banner";
 import styles from "./shell.module.scss";
 
 const primaryNavItems = [
@@ -65,14 +69,42 @@ export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { signOut, user } = useAuth();
-  const { applications } = useApplications();
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [logoutError, setLogoutError] = useState<string | null>(null);
+  const [applicationCount, setApplicationCount] = useState(0);
+  const {
+    applications,
+    dismissError,
+    errorMessage,
+  } = useApplications();
   const { mailConnection } = useAccountSettings();
   const lastMailSyncTime = mailConnection
     ? formatMailSyncTime(mailConnection.lastSyncedAt)
     : null;
   const mailProviderName = mailConnection
-    ? mailProviderLabel(mailConnection.provider)
+    ? mailProviderLabel(mailConnection.provider as MailProvider)
     : null;
+  const naverMigrationRequired = Boolean(
+    mailConnection?.provider === "naver" &&
+      mailConnection.lastErrorCode === "NAVER_LEDGER_MIGRATION_REQUIRED",
+  );
+  const mailConnectionReady = Boolean(
+    mailConnection?.status === "connected" && !naverMigrationRequired,
+  );
+  const mailConnectionTitle = !mailConnection
+    ? "채용 메일 연결"
+    : naverMigrationRequired
+      ? "운영자 확인 필요"
+      : mailConnection.status === "reauthorization_required"
+        ? "재승인 필요"
+        : mailConnection.status === "connected"
+          ? `${mailProviderName} 연결됨`
+          : "연결 확인 필요";
+  const mailConnectionDetail = mailConnectionReady
+    ? `마지막 동기화 ${lastMailSyncTime}`
+    : mailConnection
+      ? "설정에서 연결 상태를 확인하세요"
+      : "자동 정리를 시작해보세요";
   const currentApplication = applications.find(
     (application) => pathname === `/applications/${application.id}`,
   );
@@ -89,6 +121,25 @@ export function AppShell({ children }: { children: ReactNode }) {
     const application = applications.find((item) => item.id === tab.id);
     return application ? [{ ...tab, application }] : [];
   });
+  const noticeMessage = logoutError ?? errorMessage;
+  const noticeTitle = logoutError
+    ? "로그아웃하지 못했습니다"
+    : "지원 정보 상태를 확인해 주세요";
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const loadCount = () => {
+      void fetchApplicationCounts(controller.signal)
+        .then((response) => setApplicationCount(response.totalCount))
+        .catch(() => undefined);
+    };
+    loadCount();
+    window.addEventListener(JOBVIS_APPLICATIONS_INVALIDATED, loadCount);
+    return () => {
+      controller.abort();
+      window.removeEventListener(JOBVIS_APPLICATIONS_INVALIDATED, loadCount);
+    };
+  }, []);
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
@@ -135,6 +186,31 @@ export function AppShell({ children }: { children: ReactNode }) {
     );
   }
 
+  async function handleSignOut() {
+    if (loggingOut) return;
+    setLoggingOut(true);
+    setLogoutError(null);
+    try {
+      await signOut();
+    } catch (error) {
+      setLogoutError(
+        error instanceof Error
+          ? error.message
+          : "로그아웃하지 못했습니다. 다시 시도해 주세요.",
+      );
+    } finally {
+      setLoggingOut(false);
+    }
+  }
+
+  function handleNoticeAction() {
+    if (logoutError) {
+      setLogoutError(null);
+    } else {
+      dismissError();
+    }
+  }
+
   return (
     <>
       <SkipLink href="#main-content">본문으로 건너뛰기</SkipLink>
@@ -168,7 +244,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                   </span>
                   {item.match === "applications" ? (
                     <span className={styles["nav-count"]}>
-                      {applications.length}
+                      {applicationCount}
                     </span>
                   ) : null}
                 </Link>
@@ -235,21 +311,13 @@ export function AppShell({ children }: { children: ReactNode }) {
               <span
                 className={cn(
                   styles["connection-dot"],
-                  !mailConnection && styles["is-pending"],
+                  !mailConnectionReady && styles["is-pending"],
                 )}
                 aria-hidden="true"
               />
-              <strong>
-                {mailConnection
-                  ? `${mailProviderName} 연결됨`
-                  : "채용 메일 연결"}
-              </strong>
+              <strong>{mailConnectionTitle}</strong>
             </div>
-            <p>
-              {mailConnection
-                ? `마지막 동기화 ${lastMailSyncTime}`
-                : "자동 정리를 시작해보세요"}
-            </p>
+            <p>{mailConnectionDetail}</p>
           </Link>
 
           <div
@@ -268,9 +336,10 @@ export function AppShell({ children }: { children: ReactNode }) {
             <button
               className={styles["profile-logout-button"]}
               type="button"
-              onClick={signOut}
-              aria-label="로그아웃"
-              title="로그아웃"
+              onClick={() => void handleSignOut()}
+              disabled={loggingOut}
+              aria-label={loggingOut ? "로그아웃 중" : "로그아웃"}
+              title={loggingOut ? "로그아웃 중" : "로그아웃"}
             >
               <LogOut aria-hidden="true" />
             </button>
@@ -281,12 +350,29 @@ export function AppShell({ children }: { children: ReactNode }) {
           <header className={styles.topbar}>
             <div className={styles["topbar-actions"]}>
               <span className={styles["sync-copy"]}>
-                {mailConnection
-                  ? `마지막 동기화 ${lastMailSyncTime}`
-                  : "채용 메일 연결 안 됨"}
+                {mailConnection ? mailConnectionDetail : "채용 메일 연결 안 됨"}
               </span>
             </div>
           </header>
+          {noticeMessage ? (
+            <div className={styles["workspace-notice"]} role="alert">
+              <CalloutBanner
+                title={noticeTitle}
+                tone="review"
+                action={
+                  <Button
+                    tone="neutral"
+                    variant="outline"
+                    onClick={handleNoticeAction}
+                  >
+                    닫기
+                  </Button>
+                }
+              >
+                {noticeMessage}
+              </CalloutBanner>
+            </div>
+          ) : null}
           {children}
         </div>
       </div>

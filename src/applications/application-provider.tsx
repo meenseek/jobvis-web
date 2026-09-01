@@ -2,496 +2,302 @@
 
 import {
   createContext,
-  ReactNode,
+  type ReactNode,
+  useCallback,
   useContext,
-  useEffect,
-  useReducer,
+  useState,
 } from "react";
+import { useAuth } from "../auth/auth-provider";
+import { invalidateJobvisApplications } from "../api/jobvis-data-events";
 import {
-  type AddApplicationInput,
-  type ApplicationDetailsInput,
-  type ApplicationScheduleInput,
-  applicationReducer,
-  createManualApplication,
-} from "./application-state";
-import {
+  MutationAttemptRegistry,
+  type MutationIdentityPart,
+} from "../api/mutation-attempts";
+import type {
   Application,
-  ApplicationActivity,
-  ApplicationChange,
   ApplicationProgressStatus,
   ApplicationStatus,
-  applicationProgressStatusLabel,
-  fullDate,
-  getApplicationProgressStatus,
-  initialApplications,
-  progressStatusToApplicationStatus,
-  scheduleTypeLabel,
-  STATUS_OPTIONS,
-  statusValue,
-  transitionProgressStatus,
 } from "./application-data";
 import {
+  getApplicationProgressStatus,
+  progressStatusToApplicationStatus,
+  statusValue,
+} from "./application-data";
+import type {
+  ApplicationDetailsInput,
+} from "./application-state";
+import {
   completeApplicationReview,
-  completeApplicationSchedule,
-  createApplication,
   deleteApplicationActivity,
-  fetchApplications,
+  fetchApplication,
+  fetchApplicationActivities,
+  fetchApplicationChanges,
+  fetchApplicationEmails,
+  JobvisApplicationNotFoundError,
   JobvisApiUnavailableError,
+  JobvisAuthenticationRequiredError,
   updateApplicationDetails as updateApiApplicationDetails,
   updateApplicationMemo,
-  updateApplicationSchedule,
   updateApplicationStatus,
 } from "./jobvis-api-client";
 
+type ApplicationDetailLoadResult = "ready" | "not-found" | "error";
 type ApplicationContextValue = {
   applications: Application[];
-  addApplication: (input: AddApplicationInput) => Promise<string>;
-  completeNextAction: (id: string) => Promise<void>;
-  deleteActivity: (id: string, activityId: string) => Promise<void>;
-  markReviewed: (id: string) => Promise<void>;
-  saveSchedule: (id: string, schedule: ApplicationScheduleInput) => Promise<void>;
-  saveMemo: (id: string, memo: string) => Promise<void>;
+  errorMessage: string | null;
+  loadApplication: (
+    id: string,
+    signal?: AbortSignal,
+  ) => Promise<ApplicationDetailLoadResult>;
+  loadMoreHistory: (
+    id: string,
+    kind: "emails" | "activities" | "changes",
+  ) => Promise<boolean>;
+  deleteActivity: (id: string, activityId: string) => Promise<boolean>;
+  dismissError: () => void;
+  markReviewed: (id: string) => Promise<boolean>;
+  saveMemo: (id: string, memo: string) => Promise<boolean>;
   updateApplicationDetails: (
     id: string,
     details: ApplicationDetailsInput,
-  ) => Promise<void>;
+  ) => Promise<boolean>;
   updateProgressStatus: (
     id: string,
     progressStatus: ApplicationProgressStatus,
-  ) => Promise<void>;
-  updateStatus: (id: string, status: ApplicationStatus) => Promise<void>;
+  ) => Promise<boolean>;
 };
 
 const ApplicationContext = createContext<ApplicationContextValue | null>(null);
 
-function activity(
-  type: ApplicationActivity["type"],
-  title: string,
-  description: string,
-): ApplicationActivity {
-  const occurredAt = new Date().toISOString();
-  return {
-    id: `${occurredAt}-${Math.random().toString(36).slice(2)}`,
-    type,
-    title,
-    description,
-    occurredAt,
-  };
-}
-
-function changes(
-  entries: Array<{ title: string; before: string; after: string }>,
-): ApplicationChange[] {
-  const occurredAt = new Date().toISOString();
-  return entries.map(({ title, before, after }, index) => ({
-    id: `${occurredAt}-${index}-${Math.random().toString(36).slice(2)}`,
-    title,
-    description: `${before} → ${after}`,
-    occurredAt,
-  }));
-}
-
-function logApiError(error: unknown) {
-  if (error instanceof JobvisApiUnavailableError) return;
-  console.error(error);
+function apiErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof JobvisApiUnavailableError) {
+    return "Jobvis API에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.";
+  }
+  return error instanceof Error && error.message ? error.message : fallback;
 }
 
 export function ApplicationProvider({ children }: { children: ReactNode }) {
-  const [applications, dispatch] = useReducer(
-    applicationReducer,
-    initialApplications,
+  const { expireSession } = useAuth();
+  const [applications, setApplications] = useState<Application[]>([]);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [mutationAttempts] = useState(() => new MutationAttemptRegistry());
+
+  const reportApiError = useCallback(
+    (error: unknown, fallback: string) => {
+      if (error instanceof JobvisAuthenticationRequiredError) {
+        expireSession();
+        return;
+      }
+      setErrorMessage(apiErrorMessage(error, fallback));
+    },
+    [expireSession],
   );
 
-  useEffect(() => {
-    const controller = new AbortController();
-    fetchApplications(controller.signal)
-      .then((items) => dispatch({ type: "replace-all", applications: items }))
-      .catch((error: unknown) => {
-        if (error instanceof DOMException && error.name === "AbortError") {
-          return;
-        }
-        logApiError(error);
-      });
-    return () => controller.abort();
+  const storeApplication = useCallback((application: Application) => {
+    setApplications((current) => {
+      const exists = current.some((item) => item.id === application.id);
+      return exists
+        ? current.map((item) => (item.id === application.id ? application : item))
+        : [application, ...current];
+    });
   }, []);
 
-  async function addApplication(input: AddApplicationInput) {
-    const createdAt = new Date().toISOString();
-    try {
-      const application = await createApplication(input);
-      dispatch({ type: "add", application });
-      return application.id;
-    } catch (error) {
-      logApiError(error);
-      const id = `application-${Date.now()}`;
-      dispatch({
-        type: "add",
-        application: createManualApplication(
-          input,
-          id,
-          createdAt,
-          activity(
-            "status",
-            "지원 이력을 추가했습니다",
-            "메일 원문 없이 직접 추가했습니다.",
-          ),
-        ),
-      });
-      return id;
-    }
-  }
+  const loadApplication = useCallback(
+    async (id: string, signal?: AbortSignal): Promise<ApplicationDetailLoadResult> => {
+      try {
+        storeApplication(await fetchApplication(id, signal));
+        setErrorMessage(null);
+        return "ready";
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return "error";
+        if (error instanceof JobvisApplicationNotFoundError) return "not-found";
+        reportApiError(error, "지원 상세 정보를 불러오지 못했습니다.");
+        return "error";
+      }
+    },
+    [reportApiError, storeApplication],
+  );
 
-  async function completeNextAction(id: string) {
+  const mutate = useCallback(
+    async (
+      key: string,
+      identity: readonly MutationIdentityPart[],
+      application: Application,
+      operation: (mutationId: string) => Promise<Application>,
+      fallback: string,
+    ) => {
+      const mutationId = mutationAttempts.idFor(key, identity);
+      try {
+        const response = await operation(mutationId);
+        let refreshed = true;
+        try {
+          storeApplication(await fetchApplication(application.id));
+        } catch {
+          refreshed = false;
+          storeApplication(response);
+        }
+        mutationAttempts.clear(key, mutationId);
+        invalidateJobvisApplications();
+        setErrorMessage(
+          refreshed
+            ? null
+            : "변경은 저장됐지만 최신 이력을 불러오지 못했습니다. 페이지를 새로고침해 주세요.",
+        );
+        return true;
+      } catch (error) {
+        try {
+          storeApplication(await fetchApplication(application.id));
+          mutationAttempts.clear(key, mutationId);
+        } catch {
+          // Keep the same mutation id for the next retry when recovery cannot confirm state.
+        }
+        reportApiError(error, fallback);
+        return false;
+      }
+    },
+    [mutationAttempts, reportApiError, storeApplication],
+  );
+
+  async function loadMoreHistory(
+    id: string,
+    kind: "emails" | "activities" | "changes",
+  ) {
     const application = applications.find((item) => item.id === id);
-    if (!application || application.nextActionCompleted) return;
+    if (!application) return false;
+    const cursor =
+      kind === "emails"
+        ? application.emailNextCursor
+        : kind === "activities"
+          ? application.activityNextCursor
+          : application.changeNextCursor;
+    if (cursor == null) return false;
     try {
-      const updated = await completeApplicationSchedule(application);
-      dispatch({ type: "replace-one", application: updated });
-      return;
+      if (kind === "emails") {
+        const page = await fetchApplicationEmails(id, cursor);
+        storeApplication({
+          ...application,
+          emails: [...application.emails, ...page.items],
+          emailNextCursor: page.nextCursor,
+          emailTotalCount: page.totalCount,
+        });
+      } else if (kind === "activities") {
+        const page = await fetchApplicationActivities(id, cursor);
+        storeApplication({
+          ...application,
+          activities: [...application.activities, ...page.items],
+          activityNextCursor: page.nextCursor,
+        });
+      } else {
+        const page = await fetchApplicationChanges(id, cursor);
+        storeApplication({
+          ...application,
+          changes: [...application.changes, ...page.items],
+          changeNextCursor: page.nextCursor,
+          changeTotalCount: page.totalCount,
+        });
+      }
+      setErrorMessage(null);
+      return true;
     } catch (error) {
-      logApiError(error);
+      reportApiError(error, "이력을 더 불러오지 못했습니다.");
+      return false;
     }
-    dispatch({
-      type: "complete-next-action",
-      id,
-      activity: activity(
-        "task",
-        "일정을 완료했습니다",
-        "예정된 지원 일정을 완료했습니다.",
-      ),
-      changes: changes([
-        { title: "일정 상태", before: "미완료", after: "완료" },
-      ]),
-    });
   }
 
   async function deleteActivity(id: string, activityId: string) {
     const application = applications.find((item) => item.id === id);
-    if (!application) return;
-    const targetActivity = application.activities.find(
-      (item) => item.id === activityId,
+    if (!application) return false;
+    return mutate(
+      `${id}:delete-activity:${activityId}`,
+      [application.version],
+      application,
+      (mutationId) => deleteApplicationActivity(application, activityId, mutationId),
+      "타임라인 항목을 삭제하지 못했습니다.",
     );
-    if (!targetActivity) return;
-    try {
-      const updated = await deleteApplicationActivity(application, activityId);
-      dispatch({ type: "replace-one", application: updated });
-      return;
-    } catch (error) {
-      logApiError(error);
-    }
-    dispatch({
-      type: "delete-activity",
-      id,
-      activityId,
-      changes: changes([
-        {
-          title: "진행 타임라인",
-          before: targetActivity.title,
-          after: "삭제됨",
-        },
-      ]),
-    });
   }
 
   async function markReviewed(id: string) {
     const application = applications.find((item) => item.id === id);
-    if (!application?.needsReview) return;
-    try {
-      const updated = await completeApplicationReview(application);
-      dispatch({ type: "replace-one", application: updated });
-      return;
-    } catch (error) {
-      logApiError(error);
-    }
-    dispatch({
-      type: "mark-reviewed",
-      id,
-      changes: changes([
-        {
-          title: "검토 상태",
-          before: "확인 필요",
-          after: "확인 완료",
-        },
-      ]),
-    });
+    if (!application?.needsReview) return false;
+    return mutate(
+      `${id}:review`,
+      [application.version],
+      application,
+      (mutationId) => completeApplicationReview(application, mutationId),
+      "검토 완료 상태를 저장하지 못했습니다.",
+    );
   }
 
   async function saveMemo(id: string, memo: string) {
     const application = applications.find((item) => item.id === id);
-    if (!application || application.memo === memo) return;
-    try {
-      const updated = await updateApplicationMemo(application, memo);
-      dispatch({ type: "replace-one", application: updated });
-      return;
-    } catch (error) {
-      logApiError(error);
-    }
-    dispatch({
-      type: "save-memo",
-      id,
-      memo,
-      changes: changes([
-        {
-          title: "메모",
-          before: application.memo || "내용 없음",
-          after: memo || "내용 없음",
-        },
-      ]),
-    });
-  }
-
-  async function saveSchedule(id: string, schedule: ApplicationScheduleInput) {
-    const application = applications.find((item) => item.id === id);
-    if (!application || !schedule.nextActionAt) return;
-    const normalizedSchedule: ApplicationScheduleInput = {
-      nextActionAt: schedule.nextActionAt,
-      nextActionTitle: schedule.nextActionTitle?.trim() || null,
-      scheduleType: schedule.scheduleType,
-    };
-    if (
-      application.nextActionAt === normalizedSchedule.nextActionAt &&
-      (application.nextActionTitle ?? null) ===
-        normalizedSchedule.nextActionTitle &&
-      application.scheduleType === normalizedSchedule.scheduleType &&
-      !application.nextActionCompleted
-    ) {
-      return;
-    }
-
-    try {
-      const updated = await updateApplicationSchedule(
-        application,
-        normalizedSchedule,
-      );
-      dispatch({ type: "replace-one", application: updated });
-      return;
-    } catch (error) {
-      logApiError(error);
-    }
-
-    const wasScheduled = Boolean(application.nextActionAt);
-    const title =
-      normalizedSchedule.nextActionTitle ??
-      `${scheduleTypeLabel(normalizedSchedule.scheduleType)} 일정`;
-    const changedFields = [
-      (application.nextActionTitle ?? null) !==
-      normalizedSchedule.nextActionTitle
-        ? {
-            title: "일정명",
-            before: application.nextActionTitle ?? "내용 없음",
-            after: normalizedSchedule.nextActionTitle ?? "내용 없음",
-          }
-        : null,
-      application.nextActionAt !== normalizedSchedule.nextActionAt
-        ? {
-            title: "일정일",
-            before: application.nextActionAt
-              ? fullDate(application.nextActionAt)
-              : "일정 없음",
-            after: fullDate(normalizedSchedule.nextActionAt),
-          }
-        : null,
-      application.scheduleType !== normalizedSchedule.scheduleType
-        ? {
-            title: "일정 구분",
-            before: scheduleTypeLabel(application.scheduleType),
-            after: scheduleTypeLabel(normalizedSchedule.scheduleType),
-          }
-        : null,
-      application.nextActionCompleted
-        ? {
-            title: "일정 상태",
-            before: "완료",
-            after: "미완료",
-          }
-        : null,
-    ].filter((entry): entry is { title: string; before: string; after: string } =>
-      Boolean(entry),
+    if (!application || application.memo === memo) return false;
+    return mutate(
+      `${id}:memo`,
+      [application.version, memo],
+      application,
+      (mutationId) => updateApplicationMemo(application, memo, mutationId),
+      "메모를 저장하지 못했습니다.",
     );
-
-    dispatch({
-      type: "save-schedule",
-      id,
-      schedule: normalizedSchedule,
-      activity: activity(
-        "task",
-        wasScheduled ? "일정을 수정했습니다" : "일정을 등록했습니다",
-        `${title} · ${fullDate(normalizedSchedule.nextActionAt)}`,
-      ),
-      changes: changes(changedFields),
-    });
   }
 
-  async function updateApplicationDetails(
-    id: string,
-    details: ApplicationDetailsInput,
-  ) {
+  async function updateApplicationDetails(id: string, details: ApplicationDetailsInput) {
     const application = applications.find((item) => item.id === id);
-    if (!application) return;
-    const normalizedDetails: ApplicationDetailsInput = {
+    if (!application) return false;
+    const normalized = {
       company: details.company.trim(),
       position: details.position.trim(),
       location: details.location.trim() || "근무지 미입력",
       employmentType: details.employmentType.trim() || "고용 형태 미입력",
       appliedAt: details.appliedAt.trim() || application.appliedAt,
     };
-    if (!normalizedDetails.company || !normalizedDetails.position) return;
-
-    const editableFields: Array<{
-      key: keyof ApplicationDetailsInput;
-      label: string;
-    }> = [
-      { key: "company", label: "회사" },
-      { key: "position", label: "포지션" },
-      { key: "location", label: "근무지" },
-      { key: "employmentType", label: "고용 형태" },
-      { key: "appliedAt", label: "지원일" },
-    ];
-    const changedFields = editableFields.filter(
-      ({ key }) => application[key] !== normalizedDetails[key],
+    if (!normalized.company || !normalized.position) return false;
+    return mutate(
+      `${id}:details`,
+      [
+        application.version,
+        normalized.company,
+        normalized.position,
+        normalized.location,
+        normalized.employmentType,
+        normalized.appliedAt,
+      ],
+      application,
+      (mutationId) => updateApiApplicationDetails(application, normalized, mutationId),
+      "지원 정보를 저장하지 못했습니다.",
     );
-    if (!changedFields.length) return;
-
-    try {
-      const updated = await updateApiApplicationDetails(
-        application,
-        normalizedDetails,
-      );
-      dispatch({ type: "replace-one", application: updated });
-      return;
-    } catch (error) {
-      logApiError(error);
-    }
-
-    dispatch({
-      type: "update-details",
-      id,
-      details: normalizedDetails,
-      changes: changes(
-        changedFields.map(({ key, label }) => ({
-          title: label,
-          before: application[key],
-          after: normalizedDetails[key],
-        })),
-      ),
-    });
   }
 
   async function updateStatus(id: string, status: ApplicationStatus) {
     const application = applications.find((item) => item.id === id);
-    if (!application || statusValue(application) === status) return;
-    try {
-      const updated = await updateApplicationStatus(application, status);
-      dispatch({ type: "replace-one", application: updated });
-      return;
-    } catch (error) {
-      logApiError(error);
-    }
-
-    const previousLabel =
-      STATUS_OPTIONS.find(
-        (option) => option.value === statusValue(application),
-      )?.label ?? "지원 완료";
-    const label =
-      STATUS_OPTIONS.find((option) => option.value === status)?.label ??
-      "지원 완료";
-    dispatch({
-      type: "update-status",
-      id,
-      status,
-      activity: activity(
-        "status",
-        `${label} 상태가 되었습니다`,
-        "현재 지원 진행 상황에 반영했습니다.",
-      ),
-      changes: changes(
-        [
-          {
-            title: "진행 상태",
-            before: previousLabel,
-            after: label,
-          },
-          application.needsReview
-            ? {
-                title: "검토 상태",
-                before: "확인 필요",
-                after: "확인 완료",
-              }
-            : null,
-        ].filter((entry): entry is NonNullable<typeof entry> => Boolean(entry)),
-      ),
-    });
+    if (!application || statusValue(application) === status) return false;
+    return mutate(
+      `${id}:status`,
+      [application.version, status],
+      application,
+      (mutationId) => updateApplicationStatus(application, status, mutationId),
+      "지원 상태를 저장하지 못했습니다.",
+    );
   }
 
-  async function updateProgressStatus(
-    id: string,
-    progressStatus: ApplicationProgressStatus,
-  ) {
+  async function updateProgressStatus(id: string, progressStatus: ApplicationProgressStatus) {
     const application = applications.find((item) => item.id === id);
-    if (!application || getApplicationProgressStatus(application) === progressStatus) {
-      return;
-    }
-
-    try {
-      const updated = await updateApplicationStatus(
-        application,
-        progressStatusToApplicationStatus(progressStatus),
-        progressStatus,
-      );
-      dispatch({
-        type: "replace-one",
-        application: transitionProgressStatus(updated, progressStatus),
-      });
-      return;
-    } catch (error) {
-      logApiError(error);
-    }
-
-    const previousLabel = applicationProgressStatusLabel(application);
-    const label = applicationProgressStatusLabel(
-      transitionProgressStatus(application, progressStatus),
-    );
-    dispatch({
-      type: "update-progress-status",
-      id,
-      progressStatus,
-      activity: activity(
-        "status",
-        `${label} 상태가 되었습니다`,
-        "현재 지원 진행 상황에 반영했습니다.",
-      ),
-      changes: changes(
-        [
-          {
-            title: "진행 상태",
-            before: previousLabel,
-            after: label,
-          },
-          application.needsReview
-            ? {
-                title: "검토 상태",
-                before: "확인 필요",
-                after: "확인 완료",
-              }
-            : null,
-        ].filter((entry): entry is NonNullable<typeof entry> => Boolean(entry)),
-      ),
-    });
+    if (!application || getApplicationProgressStatus(application) === progressStatus) return false;
+    return updateStatus(id, progressStatusToApplicationStatus(progressStatus));
   }
 
   return (
     <ApplicationContext.Provider
       value={{
         applications,
-        addApplication,
-        completeNextAction,
+        errorMessage,
+        loadApplication,
+        loadMoreHistory,
         deleteActivity,
+        dismissError: () => setErrorMessage(null),
         markReviewed,
-        saveSchedule,
         saveMemo,
         updateApplicationDetails,
         updateProgressStatus,
-        updateStatus,
       }}
     >
       {children}
@@ -501,8 +307,6 @@ export function ApplicationProvider({ children }: { children: ReactNode }) {
 
 export function useApplications() {
   const context = useContext(ApplicationContext);
-  if (!context) {
-    throw new Error("useApplications must be used within ApplicationProvider");
-  }
+  if (!context) throw new Error("useApplications must be used within ApplicationProvider");
   return context;
 }

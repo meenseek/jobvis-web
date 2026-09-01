@@ -1,8 +1,8 @@
 # Jobvis Web
 
 Jobvis는 메일에서 수집한 지원 기록, 진행 상태와 일정을 정리하는 구직 활동
-대시보드입니다. 공식 Next.js App Router 기반으로 동작하며, 로컬에서는
-`jobvis-api`에 연결하고 API가 꺼져 있으면 데모 데이터로 화면을 유지합니다.
+대시보드입니다. 공식 Next.js App Router 기반으로 동작하며, 기본 모드에서는
+`jobvis-api`에 연결합니다. 백엔드 없이 확인할 때는 명시적인 mock 모드를 사용합니다.
 
 ## 제공 화면
 
@@ -13,32 +13,50 @@ Jobvis는 메일에서 수집한 지원 기록, 진행 상태와 일정을 정�
 - `/analytics`: 기간별 지원 수, 서류 통과율, 면접 전환율
 - `/settings`: 채용 메일 연결과 권한 설정 관리
 
-메뉴별 세부 기능, 화면 문구 결정 규칙, 연결된 API와 후속 연결 후보는
+메뉴별 세부 기능, 화면 문구 결정 규칙과 현재 연결된 API는
 [`docs/features.md`](docs/features.md)에 정리합니다.
 
-처음 진입하면 로그인/회원가입 화면을 먼저 보여줍니다. 현재 프론트 구현은 로컬
-세션 기반의 임시 인증이며, 실제 소셜 로그인은 `jobvis-api`의 auth challenge /
-exchange API와 OAuth SDK 연결 단계에서 붙입니다.
+처음 진입하면 로그인 화면을 먼저 보여줍니다. API 모드에서는 Google Identity
+Services가 받은 ID token을 `jobvis-api`의 challenge/exchange API로 검증하고, API가
+발급한 opaque session은 Next Route Handler가 `HttpOnly` 쿠키로 보관합니다. 브라우저
+JavaScript에는 session token을 노출하지 않습니다. Kakao 로그인은 서버 측 authorization
+code 교환 경계가 추가될 때까지 비활성화합니다.
 
 지원 추가, 상태 변경, 메모 저장, 할 일 완료는 `jobvis-api`의 지원 이력 API에
-저장됩니다. API 연결이 불가능한 개발 환경에서는 같은 브라우저 세션의 로컬 상태로
-대체됩니다.
+저장됩니다. 실제 API/local 모드에서는 API가 확인한 성공 응답만 화면 상태에 반영하며,
+연결 또는 저장 실패는 화면에 표시합니다. 데모 데이터는 mock 모드에서만 사용합니다.
+
+## API 계약
+
+정식 계약의 소유자는 `jobvis-api/openapi/jobvis-v1.yaml`입니다. 두 저장소가 같은 상위
+디렉터리에 있을 때 아래 명령으로
+`src/contracts/jobvis-api.generated.ts`를 다시 만들고, 애플리케이션 API client는 이
+생성 타입을 import합니다. 웹 저장소가 백엔드 소스나 런타임 패키지를 직접 import하지는
+않습니다.
+
+```bash
+npm run contract:generate
+```
+
+계약 파일을 바꾸는 API 변경은 생성 타입과 웹 consumer 변경을 같은 릴리스 단위에서
+검증합니다.
 
 ## 기술 구성
 
 - Next.js App Router와 React
 - `@measure-twice/react` 컴포넌트 및 의미 기반 토큰
 - Pretendard Variable
-- `/api/backend/*` Next Route Handler를 통한 `jobvis-api` 프록시
+- route root allowlist를 적용한 `/api/backend/*` 프록시와 `/api/auth/*` 인증 BFF
 
 ## 디렉터리 구조
 
 - `app/`: Next.js 라우트, 레이아웃, 페이지, API Route Handler
-- `src/auth/`: 첫 진입 로그인/회원가입 화면과 임시 로컬 세션 게이트
+- `src/auth/`: Google 로그인, `HttpOnly` 세션 BFF와 mock/local 데모 게이트
 - `src/shell/`: 사이드바, 상단바, 열린 상세 탭 등 앱 공통 프레임
 - `src/applications/`: 지원 이력 타입, 상태, Provider, URL 유틸, API client
-- `src/home/`: 홈 화면 클라이언트 UI와 프론트 룰 기반 홈 요약 계산
-- `src/settings/`: 메일 연결 설정 상태
+- `src/contracts/`: API 소유 OpenAPI에서 생성한 읽기 전용 TypeScript 계약
+- `src/home/`: API-backed 홈 화면과 briefing 문구
+- `src/settings/`: 메일 연결·가져오기 API 상태
 - `src/mock-api/`: `dev:mock`에서 사용하는 메모리 기반 API 응답
 
 스타일은 `app/globals.scss`에 몰아넣지 않고 기능 옆에 둡니다. 공통 토큰과 base
@@ -56,7 +74,25 @@ npm run dev
 `http://127.0.0.1:8080`이며, 필요하면 환경 변수로 바꿀 수 있습니다.
 
 ```bash
-JOBVIS_API_BASE_URL=http://127.0.0.1:8080 npm run dev:api
+NEXT_PUBLIC_JOBVIS_GOOGLE_CLIENT_ID=<Google Web Client ID> \
+JOBVIS_API_BASE_URL=http://127.0.0.1:8080 \
+npm run dev:api
+```
+
+`NEXT_PUBLIC_JOBVIS_GOOGLE_CLIENT_ID`는 `jobvis-api`의
+`JOBVIS_GOOGLE_CLIENT_ID`와 같은 Google Web Client ID를 사용합니다. 운영 빌드의
+session cookie는 `HttpOnly`, `Secure`, `SameSite=Lax`와 host-only 범위로 설정됩니다.
+신뢰할 수 있는 인그레스가 외부 `Forwarded`와 `X-Forwarded-For`를 제거하고 다시 쓰는
+운영 환경에서는 `jobvis-api`에 `JOBVIS_FORWARD_HEADERS_STRATEGY=framework`를 설정합니다.
+인증 BFF가 정리된 클라이언트 주소를 API까지 전달해 로그인 rate limit을 사용자별로
+적용합니다. 인그레스가 전달 헤더를 정리하지 않는 환경에서는 이 설정을 사용하지 않습니다.
+
+실제 로그인 없이 로컬 API의 `local` 프로필과 연결할 때만 local 모드를 사용합니다.
+이 모드에서는 데모 로그인 게이트를 사용하고, 프록시가 loopback API에만
+`X-Jobvis-User-Id`를 전달합니다.
+
+```bash
+JOBVIS_LOCAL_USER_ID=11111111-1111-4111-8111-111111111111 npm run dev:local
 ```
 
 백엔드 없이 화면과 API 연동 흐름만 확인할 때는 메모리 기반 mock API로 실행할 수

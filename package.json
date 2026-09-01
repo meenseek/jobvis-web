@@ -7,12 +7,15 @@
   "scripts": {
     "dev": "next dev",
     "dev:api": "JOBVIS_API_MODE=api NEXT_PUBLIC_JOBVIS_API_MODE=api next dev",
+    "dev:local": "JOBVIS_API_MODE=local NEXT_PUBLIC_JOBVIS_API_MODE=local next dev",
     "dev:mock": "JOBVIS_API_MODE=mock NEXT_PUBLIC_JOBVIS_API_MODE=mock next dev",
     "build": "next build",
     "start": "next start",
     "start:api": "JOBVIS_API_MODE=api NEXT_PUBLIC_JOBVIS_API_MODE=api next start",
+    "start:local": "JOBVIS_API_MODE=local NEXT_PUBLIC_JOBVIS_API_MODE=local next start",
     "start:mock": "JOBVIS_API_MODE=mock NEXT_PUBLIC_JOBVIS_API_MODE=mock next start",
-    "test": "NEXT_PUBLIC_JOBVIS_AUTH_BYPASS=1 npm run build && NEXT_PUBLIC_JOBVIS_AUTH_BYPASS=1 node --test tests/rendered-html.test.mjs",
+    "contract:generate": "openapi-typescript ../jobvis-api/openapi/jobvis-v1.yaml -o src/contracts/jobvis-api.generated.ts",
+    "test": "JOBVIS_API_MODE=api NEXT_PUBLIC_JOBVIS_API_MODE=mock NEXT_PUBLIC_JOBVIS_AUTH_BYPASS=1 npm run build -- --webpack && NEXT_PUBLIC_JOBVIS_AUTH_BYPASS=1 node --test tests/rendered-html.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next"
   },
   "dependencies": {
@@ -34,6 +37,7 @@
     "eslint-plugin-react": "7.37.5",
     "eslint-plugin-react-hooks": "7.1.1",
     "globals": "16.4.0",
+    "openapi-typescript": "^7.13.0",
     "sass": "^1.103.1",
     "typescript": "5.9.3",
     "typescript-eslint": "8.59.3"

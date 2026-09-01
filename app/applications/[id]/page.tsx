@@ -57,12 +57,21 @@ export default function ApplicationDetailPage() {
   const {
     applications,
     deleteActivity,
+    loadApplication,
+    loadMoreHistory,
     markReviewed,
     saveMemo,
     updateApplicationDetails,
     updateProgressStatus,
   } = useApplications();
   const application = applications.find((item) => item.id === params.id);
+  const [detailLoadState, setDetailLoadState] = useState<{
+    id: string;
+    status: "loading" | "ready" | "not-found" | "error";
+  }>({ id: params.id, status: "loading" });
+  const detailLoadStatus =
+    detailLoadState.id === params.id ? detailLoadState.status : "loading";
+  const [detailReloadKey, setDetailReloadKey] = useState(0);
   const [memoDrafts, setMemoDrafts] = useState<Record<string, string[]>>({});
   const [openMemoDrafts, setOpenMemoDrafts] = useState<
     Record<string, number | null>
@@ -73,8 +82,23 @@ export default function ApplicationDetailPage() {
     useState<ApplicationDetailsInput | null>(null);
   const [selectedEmail, setSelectedEmail] =
     useState<ApplicationEmail | null>(null);
+  const [loadingHistory, setLoadingHistory] = useState<
+    "emails" | "activities" | "changes" | null
+  >(null);
   const requestedReturnPath = searchParams.get("from");
   const returnPath = safeApplicationListPath(requestedReturnPath);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let active = true;
+    void loadApplication(params.id, controller.signal).then((result) => {
+      if (active) setDetailLoadState({ id: params.id, status: result });
+    });
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [detailReloadKey, loadApplication, params.id]);
 
   useEffect(() => {
     if (!saved) return;
@@ -82,7 +106,36 @@ export default function ApplicationDetailPage() {
     return () => window.clearTimeout(timer);
   }, [saved]);
 
-  if (!application) {
+  if (detailLoadStatus === "loading") {
+    return (
+      <main id="main-content" className="main-content">
+        <section className={cn("panel", styles["not-found-panel"])}>
+          <h1>지원 상세 정보를 불러오는 중입니다.</h1>
+        </section>
+      </main>
+    );
+  }
+
+  if (detailLoadStatus === "error") {
+    return (
+      <main id="main-content" className="main-content">
+        <section className={cn("panel", styles["not-found-panel"])}>
+          <h1>지원 상세 정보를 불러오지 못했습니다.</h1>
+          <p>연결 상태를 확인한 뒤 다시 시도해 주세요.</p>
+          <Button
+            onClick={() => {
+              setDetailLoadState({ id: params.id, status: "loading" });
+              setDetailReloadKey((value) => value + 1);
+            }}
+          >
+            다시 시도
+          </Button>
+        </section>
+      </main>
+    );
+  }
+
+  if (detailLoadStatus === "not-found" || !application) {
     return (
       <main id="main-content" className="main-content">
         <section
@@ -117,8 +170,8 @@ export default function ApplicationDetailPage() {
 
   async function handleMemoSave() {
     if (!isMemoDirty) return;
-    await saveMemo(selectedApplication.id, memo.trim());
-    setSaved(true);
+    const savedMemo = await saveMemo(selectedApplication.id, memo.trim());
+    if (savedMemo) setSaved(true);
   }
 
   function updateMemoBlocks(updater: (blocks: string[]) => string[]) {
@@ -181,8 +234,22 @@ export default function ApplicationDetailPage() {
     ) {
       return;
     }
-    await updateApplicationDetails(selectedApplication.id, detailsDraft);
-    closeDetailsEditor();
+    const updated = await updateApplicationDetails(
+      selectedApplication.id,
+      detailsDraft,
+    );
+    if (updated) closeDetailsEditor();
+  }
+
+  async function handleLoadMore(
+    kind: "emails" | "activities" | "changes",
+  ) {
+    setLoadingHistory(kind);
+    try {
+      await loadMoreHistory(selectedApplication.id, kind);
+    } finally {
+      setLoadingHistory(null);
+    }
   }
 
   return (
@@ -316,13 +383,24 @@ export default function ApplicationDetailPage() {
                 </li>
               ))}
             </ol>
+            {selectedApplication.activityNextCursor != null ? (
+              <Button
+                size="sm"
+                tone="neutral"
+                variant="ghost"
+                disabled={loadingHistory === "activities"}
+                onClick={() => handleLoadMore("activities")}
+              >
+                {loadingHistory === "activities" ? "불러오는 중" : "이전 활동 더 보기"}
+              </Button>
+            ) : null}
           </article>
 
           <article className="panel">
             <div className="panel-heading">
               <h2>관련 메일</h2>
               <span className="panel-count">
-                {selectedApplication.emails.length}개
+                {selectedApplication.emailTotalCount ?? selectedApplication.emails.length}개
               </span>
             </div>
             <div className={styles["email-list"]}>
@@ -356,6 +434,17 @@ export default function ApplicationDetailPage() {
                   <p>직접 추가한 지원 이력은 메일 없이 관리할 수 있습니다.</p>
                 </div>
               ) : null}
+              {selectedApplication.emailNextCursor != null ? (
+                <Button
+                  size="sm"
+                  tone="neutral"
+                  variant="ghost"
+                  disabled={loadingHistory === "emails"}
+                  onClick={() => handleLoadMore("emails")}
+                >
+                  {loadingHistory === "emails" ? "불러오는 중" : "이전 메일 더 보기"}
+                </Button>
+              ) : null}
             </div>
           </article>
 
@@ -363,7 +452,7 @@ export default function ApplicationDetailPage() {
             <div className="panel-heading">
               <h2>변경 기록</h2>
               <span className="panel-count">
-                {sortedChanges.length}개
+                {selectedApplication.changeTotalCount ?? sortedChanges.length}개
               </span>
             </div>
             {sortedChanges.length ? (
@@ -387,6 +476,17 @@ export default function ApplicationDetailPage() {
                 <p>기본 정보, 진행 상태 또는 메모를 수정하면 여기에 남습니다.</p>
               </div>
             )}
+            {selectedApplication.changeNextCursor != null ? (
+              <Button
+                size="sm"
+                tone="neutral"
+                variant="ghost"
+                disabled={loadingHistory === "changes"}
+                onClick={() => handleLoadMore("changes")}
+              >
+                {loadingHistory === "changes" ? "불러오는 중" : "이전 변경 더 보기"}
+              </Button>
+            ) : null}
           </article>
         </div>
 

@@ -2,18 +2,16 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { access, readFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import net from "node:net";
 import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
-import {
-  applicationReducer,
-  createManualApplication,
-} from "../src/applications/application-state.ts";
 import {
   compareOccurredAtDesc,
   filterApplications,
   filterScheduledApplications,
   fullDate,
+  getApplicationProgressStatus,
   homeGreeting,
   initialApplications,
   normalizeApplicationFilter,
@@ -36,12 +34,133 @@ import {
   initialAccountSettings,
   mailProviderLabel,
 } from "../src/settings/settings-state.ts";
+import { MutationAttemptRegistry } from "../src/api/mutation-attempts.ts";
 
 const projectRoot = new URL("../", import.meta.url);
 const [currentYear, currentMonth] = seoulDateKey().split("-");
 let nextServer;
 let nextBaseUrlPromise;
 let nextServerOutput = "";
+let fakeJobvisApi;
+let fakeJobvisApiBaseUrlPromise;
+const fakeJobvisApiRequests = [];
+
+test("mutation ids belong to an exact request attempt", () => {
+  let sequence = 0;
+  const attempts = new MutationAttemptRegistry(() => `mutation-${++sequence}`);
+
+  const first = attempts.idFor("save-memo", [3, "첫 메모"]);
+  assert.equal(attempts.idFor("save-memo", [3, "첫 메모"]), first);
+
+  const changed = attempts.idFor("save-memo", [3, "수정한 메모"]);
+  assert.notEqual(changed, first);
+
+  attempts.clear("save-memo", first);
+  assert.equal(
+    attempts.idFor("save-memo", [3, "수정한 메모"]),
+    changed,
+  );
+
+  attempts.clear("save-memo", changed);
+  assert.notEqual(
+    attempts.idFor("save-memo", [3, "수정한 메모"]),
+    changed,
+  );
+
+  const sync = attempts.idFor("sync-mail", ["connection-1"]);
+  attempts.clearAll();
+  assert.notEqual(attempts.idFor("sync-mail", ["connection-1"]), sync);
+});
+
+function jsonResponse(response, status, body) {
+  response.writeHead(status, { "content-type": "application/json" });
+  response.end(JSON.stringify(body));
+}
+
+async function requestBody(request) {
+  const chunks = [];
+  for await (const chunk of request) chunks.push(chunk);
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+async function startFakeJobvisApi() {
+  if (fakeJobvisApiBaseUrlPromise) return fakeJobvisApiBaseUrlPromise;
+
+  fakeJobvisApiBaseUrlPromise = new Promise((resolve, reject) => {
+    fakeJobvisApi = createServer(async (request, response) => {
+      const body = await requestBody(request);
+      fakeJobvisApiRequests.push({
+        body,
+        headers: request.headers,
+        method: request.method,
+        url: request.url,
+      });
+
+      if (request.method === "GET" && request.url === "/api/v1/auth/providers") {
+        jsonResponse(response, 200, [
+          { provider: "google", configured: true },
+          { provider: "kakao", configured: false },
+        ]);
+        return;
+      }
+      if (request.method === "POST" && request.url === "/api/v1/auth/challenges") {
+        jsonResponse(response, 201, {
+          challengeToken: "challenge-token",
+          nonce: "login-nonce",
+          expiresAt: "2099-01-01T00:00:00Z",
+        });
+        return;
+      }
+      if (request.method === "POST" && request.url === "/api/v1/auth/exchange") {
+        jsonResponse(response, 200, {
+          accessToken: "opaque-session-token",
+          tokenType: "Bearer",
+          expiresAt: "2099-01-01T00:00:00Z",
+          user: {
+            id: "22222222-2222-4222-8222-222222222222",
+            displayName: "인증 사용자",
+            primaryEmail: "auth@example.com",
+          },
+        });
+        return;
+      }
+
+      const authorization = request.headers.authorization;
+      if (authorization !== "Bearer opaque-session-token") {
+        jsonResponse(response, 401, { message: "로그인이 필요합니다." });
+        return;
+      }
+      if (request.method === "GET" && request.url === "/api/v1/auth/me") {
+        jsonResponse(response, 200, {
+          id: "22222222-2222-4222-8222-222222222222",
+          displayName: "인증 사용자",
+          primaryEmail: "auth@example.com",
+        });
+        return;
+      }
+      if (request.method === "POST" && request.url === "/api/v1/auth/logout") {
+        response.writeHead(204);
+        response.end();
+        return;
+      }
+      if (request.method === "GET" && request.url === "/api/v1/applications/counts") {
+        jsonResponse(response, 200, { totalCount: 0 });
+        return;
+      }
+
+      jsonResponse(response, 404, { message: "not found" });
+    });
+    fakeJobvisApi.once("error", reject);
+    fakeJobvisApi.listen(0, "127.0.0.1", () => {
+      const address = fakeJobvisApi.address();
+      assert.equal(typeof address, "object");
+      assert.ok(address);
+      resolve(`http://127.0.0.1:${address.port}`);
+    });
+  });
+
+  return fakeJobvisApiBaseUrlPromise;
+}
 
 async function getAvailablePort() {
   const server = net.createServer();
@@ -61,12 +180,19 @@ async function startNextServer() {
 
   nextBaseUrlPromise = (async () => {
     const port = await getAvailablePort();
+    const fakeApiBaseUrl = await startFakeJobvisApi();
     nextServer = spawn(
       process.execPath,
       ["node_modules/next/dist/bin/next", "start", "-H", "127.0.0.1", "-p", String(port)],
       {
         cwd: fileURLToPath(projectRoot),
-        env: { ...process.env, NEXT_TELEMETRY_DISABLED: "1" },
+        env: {
+          ...process.env,
+          JOBVIS_API_BASE_URL: fakeApiBaseUrl,
+          JOBVIS_API_MODE: "api",
+          NEXT_PUBLIC_JOBVIS_API_MODE: "api",
+          NEXT_TELEMETRY_DISABLED: "1",
+        },
         stdio: ["ignore", "pipe", "pipe"],
       },
     );
@@ -107,6 +233,9 @@ after(() => {
   if (nextServer && nextServer.exitCode === null) {
     nextServer.kill();
   }
+  if (fakeJobvisApi?.listening) {
+    fakeJobvisApi.close();
+  }
 });
 
 async function render(pathname = "/") {
@@ -141,11 +270,11 @@ async function readStyleBundle() {
 }
 
 const routes = [
-  ["/", /오늘의 우선순위/],
+  ["/", /홈 요약을 불러오는 중입니다/],
   ["/applications", /지원 목록/],
-  ["/applications?q=무신사&status=test", /무신사/],
-  ["/applications/musinsa", /온라인 코딩 테스트 안내/],
-  ["/applications/missing", /지원 이력을 찾을 수 없습니다/],
+  ["/applications?q=무신사&status=test", /지원 목록/],
+  ["/applications/musinsa", /지원 상세 정보를 불러오는 중입니다/],
+  ["/applications/missing", /지원 상세 정보를 불러오는 중입니다/],
   ["/calendar", new RegExp(`${currentYear}년 ${Number(currentMonth)}월`)],
   ["/analytics", /면접 전환율/],
   ["/settings", /채용 메일을 연결할까요/],
@@ -166,15 +295,134 @@ for (const [pathname, expectedContent] of routes) {
   });
 }
 
-test("server-rendered URL filters exclude non-matching applications", async () => {
+test("BFF keeps the Jobvis session out of browser JavaScript and secures proxy requests", async () => {
+  const baseUrl = await startNextServer();
+  const challengeResponse = await fetch(`${baseUrl}/api/auth/challenges`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      origin: baseUrl,
+      "x-forwarded-for": "203.0.113.7",
+    },
+    body: JSON.stringify({ provider: "google" }),
+  });
+  assert.equal(challengeResponse.status, 201);
+  assert.equal((await challengeResponse.json()).nonce, "login-nonce");
+  const challengeRequest = fakeJobvisApiRequests.findLast(
+    (request) => request.url === "/api/v1/auth/challenges",
+  );
+  assert.equal(challengeRequest?.headers["x-forwarded-for"], "203.0.113.7");
+
+  const unauthenticatedApplicationsResponse = await fetch(
+    `${baseUrl}/api/backend/applications/counts`,
+  );
+  assert.equal(unauthenticatedApplicationsResponse.status, 401);
+  assert.match(
+    unauthenticatedApplicationsResponse.headers.get("set-cookie") ?? "",
+    /Expires=Thu, 01 Jan 1970/i,
+  );
+
+  const exchangeResponse = await fetch(`${baseUrl}/api/auth/exchange`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      origin: baseUrl,
+    },
+    body: JSON.stringify({
+      provider: "google",
+      idToken: "google-id-token",
+      challengeToken: "challenge-token",
+      nonce: "login-nonce",
+    }),
+  });
+  assert.equal(exchangeResponse.status, 200);
+  const exchangeBody = await exchangeResponse.json();
+  assert.equal(exchangeBody.user.primaryEmail, "auth@example.com");
+  assert.equal("accessToken" in exchangeBody, false);
+
+  const setCookie = exchangeResponse.headers.get("set-cookie") ?? "";
+  assert.match(setCookie, /^__Host-jobvis-session=opaque-session-token;/);
+  assert.match(setCookie, /HttpOnly/i);
+  assert.match(setCookie, /Secure/i);
+  assert.match(setCookie, /SameSite=Lax/i);
+  assert.match(setCookie, /Path=\//i);
+  const sessionCookie = setCookie.split(";", 1)[0];
+
+  const meResponse = await fetch(`${baseUrl}/api/auth/me`, {
+    headers: { cookie: sessionCookie },
+  });
+  assert.equal(meResponse.status, 200);
+  assert.equal((await meResponse.json()).displayName, "인증 사용자");
+
+  const applicationsResponse = await fetch(`${baseUrl}/api/backend/applications/counts`, {
+    headers: {
+      authorization: "Bearer browser-controlled-token",
+      cookie: sessionCookie,
+    },
+  });
+  assert.equal(applicationsResponse.status, 200);
+  assert.deepEqual(await applicationsResponse.json(), { totalCount: 0 });
+  const applicationsRequest = fakeJobvisApiRequests.findLast(
+    (request) => request.url === "/api/v1/applications/counts",
+  );
+  assert.ok(applicationsRequest);
+  assert.equal(
+    applicationsRequest.headers.authorization,
+    "Bearer opaque-session-token",
+  );
+  assert.equal(applicationsRequest.headers.cookie, undefined);
+  assert.equal(applicationsRequest.headers["x-jobvis-user-id"], undefined);
+
+  for (const blockedPath of ["auth/exchange", "%2561uth/exchange"]) {
+    const directAuthResponse = await fetch(
+      `${baseUrl}/api/backend/${blockedPath}`,
+    );
+    assert.equal(directAuthResponse.status, 404);
+  }
+  for (const unusedRoot of ["activities/recent", "calendar-exports/previews"]) {
+    const unusedResponse = await fetch(`${baseUrl}/api/backend/${unusedRoot}`);
+    assert.equal(unusedResponse.status, 404);
+  }
+
+  const crossSiteMutation = await fetch(`${baseUrl}/api/backend/applications`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      cookie: sessionCookie,
+      origin: "https://attacker.example",
+    },
+    body: "{}",
+  });
+  assert.equal(crossSiteMutation.status, 403);
+
+  const logoutResponse = await fetch(`${baseUrl}/api/auth/logout`, {
+    method: "POST",
+    headers: { cookie: sessionCookie, origin: baseUrl },
+  });
+  assert.equal(logoutResponse.status, 204);
+  assert.match(logoutResponse.headers.get("set-cookie") ?? "", /Expires=Thu, 01 Jan 1970/i);
+  const logoutRequest = fakeJobvisApiRequests.findLast(
+    (request) => request.url === "/api/v1/auth/logout",
+  );
+  assert.equal(logoutRequest?.headers.authorization, "Bearer opaque-session-token");
+});
+
+test("server render defers URL-filtered rows to route-owned client data", async () => {
   const response = await render(
     "/applications?q=%EB%AC%B4%EC%8B%A0%EC%82%AC&status=test",
   );
   const html = await response.text();
+  assert.match(html, /지원 목록/);
   const tableBody = html.match(/<tbody[^>]*>([\s\S]*?)<\/tbody>/)?.[1] ?? "";
-  assert.match(tableBody, /무신사/);
-  assert.doesNotMatch(tableBody, /토스페이먼츠/);
-  assert.match(html, /aria-label="무신사 [^"]* 지원 상세 보기"/);
+  assert.equal(tableBody, "");
+  assert.match(html, /value="무신사"/);
+  assert.doesNotMatch(html, /토스페이먼츠/);
+  const source = await readFile(
+    new URL("../src/applications/applications-client-page.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /fetchApplicationPage\(/);
+  assert.match(source, /router\.replace\(applicationListPath/);
 });
 
 test("uses real route navigation and shared application state", async () => {
@@ -184,9 +432,9 @@ test("uses real route navigation and shared application state", async () => {
     authGate,
     authProvider,
     authScreen,
+    googleButton,
     homePage,
     homeClientPage,
-    homeSummary,
     applicationsPage,
     detailPage,
     calendarPage,
@@ -196,17 +444,20 @@ test("uses real route navigation and shared application state", async () => {
     styles,
     packageJson,
     apiRoute,
+    authApiRoute,
+    serverSession,
     mockApi,
     apiClient,
+    commonApiClient,
   ] = await Promise.all([
     readFile(new URL("../src/shell/app-shell.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/applications/application-provider.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/auth/auth-gate.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/auth/auth-provider.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/auth/auth-screen.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/auth/google-sign-in-button.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/home/home-client-page.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../src/home/home-summary.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/applications/applications-client-page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/applications/[id]/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/calendar/page.tsx", import.meta.url), "utf8"),
@@ -216,8 +467,11 @@ test("uses real route navigation and shared application state", async () => {
     readStyleBundle(),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
     readFile(new URL("../app/api/backend/[...path]/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/auth/[action]/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/auth/server-session.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/mock-api/applications.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/applications/jobvis-api-client.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/api/jobvis-api-client.ts", import.meta.url), "utf8"),
   ]);
 
   assert.match(shell, /href: "\/applications"/);
@@ -235,34 +489,65 @@ test("uses real route navigation and shared application state", async () => {
   assert.match(shell, /aria-current/);
   assert.match(shell, /useAuth/);
   assert.match(shell, /profile-logout-button/);
+  assert.match(shell, /handleSignOut/);
+  assert.match(shell, /로그아웃하지 못했습니다/);
+  assert.match(shell, /fetchApplicationCounts/);
+  assert.match(shell, /JOBVIS_APPLICATIONS_INVALIDATED/);
+  assert.match(shell, /NAVER_LEDGER_MIGRATION_REQUIRED/);
+  assert.match(shell, /운영자 확인 필요/);
+  assert.match(shell, /재승인 필요/);
+  assert.match(shell, /지원 정보 상태를 확인해 주세요/);
+  assert.match(authGate, /status === "loading"/);
+  assert.match(authGate, /status === "unavailable"/);
+  assert.match(authGate, /retrySession/);
   assert.match(authGate, /<AuthScreen \/>/);
   assert.match(authProvider, /NEXT_PUBLIC_JOBVIS_AUTH_BYPASS/);
   assert.match(authProvider, /NEXT_PUBLIC_JOBVIS_API_MODE/);
+  assert.match(authProvider, /isDemoMode = isMockMode \|\| isLocalMode/);
+  assert.match(authProvider, /fetch\("\/api\/auth\/me"/);
+  assert.match(authProvider, /fetch\("\/api\/auth\/exchange"/);
+  assert.match(authProvider, /keepalive: true/);
+  assert.match(authProvider, /expireSession/);
+  assert.match(authProvider, /response\.status === 401/);
+  assert.match(authProvider, /setStatus\("unavailable"\)/);
+  assert.match(authProvider, /retrySession/);
   assert.match(authProvider, /createDemoUser/);
   assert.match(authProvider, /localStorage/);
-  assert.match(authScreen, /Google로 시작하기/);
+  assert.match(authProvider, /jobvis\.mock-auth\.user/);
+  assert.match(googleButton, /Google로 시작하기/);
+  assert.match(googleButton, /accounts\.google\.com\/gsi\/client/);
+  assert.match(googleButton, /NEXT_PUBLIC_JOBVIS_GOOGLE_CLIENT_ID/);
+  assert.match(googleButton, /nonce: challenge\.nonce/);
+  assert.match(authScreen, /Kakao 로그인 준비 중/);
   assert.match(authScreen, /기존 계정으로 로그인됩니다/);
   assert.doesNotMatch(authScreen, /auth-mode-tabs/);
   assert.doesNotMatch(authScreen, /이메일/);
   assert.match(provider, /updateStatus/);
-  assert.match(provider, /completeNextAction/);
+  assert.match(provider, /JobvisAuthenticationRequiredError/);
+  assert.match(provider, /expireSession\(\)/);
   assert.match(provider, /saveMemo/);
   assert.match(provider, /updateApplicationDetails/);
-  assert.match(provider, /saveSchedule/);
   assert.match(provider, /deleteActivity/);
-  assert.match(provider, /description: `\$\{before\} → \$\{after\}`/);
-  assert.match(provider, /title: "진행 상태"/);
-  assert.match(provider, /title: "검토 상태"/);
-  assert.match(provider, /title: "일정 상태"/);
-  assert.match(provider, /title: "일정명"/);
-  assert.match(provider, /title: "일정 구분"/);
-  assert.match(provider, /title: "메모"/);
+  assert.match(provider, /loadApplication/);
+  assert.match(provider, /loadMoreHistory/);
+  assert.match(provider, /mutationAttempts\.idFor\(key, identity\)/);
+  assert.match(provider, /변경은 저장됐지만 최신 이력을 불러오지 못했습니다/);
+  assert.doesNotMatch(provider, /emails: application\.emails/);
+  assert.doesNotMatch(provider, /createManualApplication/);
+  assert.doesNotMatch(provider, /type: "save-memo"/);
   assert.match(applicationsPage, /applicationDetailPath/);
   assert.match(applicationsPage, /router\.replace\(applicationListPath/);
-  assert.match(applicationsPage, /markReviewed/);
+  assert.match(applicationsPage, /fetchApplicationPage/);
+  assert.match(applicationsPage, /completeAllApplicationReviews/);
+  assert.match(applicationsPage, /createApplication/);
+  assert.match(applicationsPage, /recoveredPage\.reviewRevision !== expectedReviewRevision/);
+  assert.match(applicationsPage, /mutationAttempts\.idFor\(key, \[company, position, stage\]\)/);
   assert.match(applicationsPage, /일괄 확인/);
   assert.match(applicationsPage, /확인 필요 항목을 일괄 확인할까요/);
+  assert.match(homeClientPage, /recoveredItem\.applicationVersion !== version/);
+  assert.match(mockApi, /upcomingSchedules: weeklyUpcoming\.slice\(0, 5\)/);
   assert.match(detailPage, /safeApplicationListPath/);
+  assert.match(detailPage, /loadApplication\(params\.id/);
   assert.match(detailPage, /PROGRESS_STATUS_OPTIONS/);
   assert.match(detailPage, /<Pencil aria-hidden="true"/);
   assert.match(detailPage, /기본 정보 편집/);
@@ -275,9 +560,14 @@ test("uses real route navigation and shared application state", async () => {
   assert.match(calendarPage, /aria-current/);
   assert.doesNotMatch(calendarPage, /SCHEDULE_TYPE_OPTIONS/);
   assert.doesNotMatch(calendarPage, /일정 유형/);
-  assert.match(calendarPage, /saveSchedule/);
+  assert.match(calendarPage, /fetchCalendarSchedules/);
+  assert.match(calendarPage, /"schedulable",\s*0,\s*20/);
+  assert.doesNotMatch(calendarPage, /while \(page\.hasNext\)/);
+  assert.match(calendarPage, /patchScheduleByVersion/);
   assert.match(calendarPage, /일정 등록/);
   assert.match(calendarPage, /<article className=\{styles\["calendar-panel"\]\}/);
+  assert.match(calendarPage, /error instanceof JobvisConflictError/);
+  assert.match(calendarPage, /loadSchedulableApplications\(\)/);
   assert.doesNotMatch(
     calendarPage,
     /cn\("panel",\s*styles\["calendar-panel"\]/,
@@ -285,6 +575,9 @@ test("uses real route navigation and shared application state", async () => {
   assert.match(analyticsPage, /analytics-trend-graphic/);
   assert.match(analyticsPage, /conversion-list/);
   assert.match(analyticsPage, /pathLength=\{1\}/);
+  assert.match(analyticsPage, /gmail: "Gmail 메일"/);
+  assert.match(analyticsPage, /manual: "직접 추가"/);
+  assert.match(analyticsPage, /other: "기타"/);
   assert.match(settingsPage, /채용 메일을 연결할까요/);
   assert.match(settingsPage, /URLSearchParams\(window\.location\.search\)/);
   assert.match(settingsPage, /inferMailProvider/);
@@ -330,6 +623,10 @@ test("uses real route navigation and shared application state", async () => {
     packageJson,
     /"dev:api": "JOBVIS_API_MODE=api NEXT_PUBLIC_JOBVIS_API_MODE=api next dev"/,
   );
+  assert.match(
+    packageJson,
+    /"dev:local": "JOBVIS_API_MODE=local NEXT_PUBLIC_JOBVIS_API_MODE=local next dev"/,
+  );
   assert.match(packageJson, /NEXT_PUBLIC_JOBVIS_AUTH_BYPASS=1 npm run build/);
   assert.doesNotMatch(packageJson, /"vinext"/);
   assert.doesNotMatch(packageJson, /"vite"/);
@@ -339,23 +636,46 @@ test("uses real route navigation and shared application state", async () => {
   assert.match(apiRoute, /JOBVIS_API_MODE/);
   assert.match(apiRoute, /handleMockJobvisApi/);
   assert.match(apiRoute, /x-jobvis-user-id/);
+  assert.match(apiRoute, /API_MODE === "local"/);
+  assert.match(apiRoute, /LOOPBACK_API_HOSTS/);
+  assert.match(apiRoute, /!isLoopbackApi\(\)/);
+  assert.match(apiRoute, /PROXIED_RESOURCE_ROOTS/);
+  assert.match(apiRoute, /retry-after/);
+  assert.match(apiRoute, /JOBVIS_SESSION_COOKIE/);
+  assert.doesNotMatch(apiRoute, /request\.headers\.get\("authorization"\)/);
+  assert.doesNotMatch(apiRoute, /request\.headers\.get\("cookie"\)/);
+  assert.match(authApiRoute, /setSessionCookie/);
+  assert.match(authApiRoute, /retry-after/);
+  assert.match(authApiRoute, /setSessionCookie\(response, session\.accessToken/);
+  assert.doesNotMatch(authApiRoute, /NextResponse\.json\(session\)/);
+  assert.match(serverSession, /httpOnly: true/);
+  assert.match(serverSession, /sameSite: "lax"/);
+  assert.match(serverSession, /__Host-jobvis-session/);
+  assert.match(serverSession, /problemResponse/);
   assert.match(mockApi, /x-jobvis-api-mode/);
+  assert.match(mockApi, /application\/problem\+json/);
   assert.match(mockApi, /filterApplications/);
+  assert.match(mockApi, /item\.result !== "rejected"/);
+  assert.match(mockApi, /return methodNotAllowed\(\)/);
+  assert.match(mockApi, /nextActionAt: null/);
   assert.match(mockApi, /updateSchedule/);
   assert.match(mockApi, /deleteActivity/);
   assert.match(mockApi, /completeSchedule/);
-  assert.match(homePage, /<HomeClientPage today=\{today\} todayLabel=\{todayLabel\}/);
-  assert.match(homeClientPage, /buildRuleBasedHomeSummary/);
+  assert.match(homePage, /<HomeClientPage todayLabel=\{todayLabel\}/);
+  assert.match(homeClientPage, /fetchHomeSummary/);
   assert.match(homeClientPage, /home-mail-setup-banner/);
   assert.match(homeClientPage, /채용 메일 연결하기/);
   assert.match(homeClientPage, /href="\/settings\?connect=mail"/);
   assert.doesNotMatch(homeClientPage, /href="\/settings\?connect=gmail"/);
   assert.doesNotMatch(homeClientPage, /href="\/settings\?connect=naver"/);
-  assert.match(homeSummary, /source: "rule"/);
-  assert.match(homeSummary, /briefing/);
-  assert.match(apiClient, /\/api\/backend/);
   assert.match(apiClient, /JobvisApiUnavailableError/);
+  assert.match(apiClient, /JobvisAuthenticationRequiredError/);
   assert.match(apiClient, /updateApplicationSchedule/);
+  assert.match(apiClient, /fetchApplication/);
+  assert.match(apiClient, /jobvis-api\.generated/);
+  assert.match(commonApiClient, /\/api\/backend/);
+  assert.match(commonApiClient, /body\?\.detail/);
+  assert.match(authProvider, /body\?\.detail/);
   assert.match(apiClient, /deleteApplicationActivity/);
   assert.doesNotMatch(styles, /thead\s*\{\s*display:\s*none/);
   await assert.rejects(access(new URL("../app/_sites-preview", projectRoot)));
@@ -428,6 +748,18 @@ test("status transitions preserve conversion history and support final outcomes"
   assert.equal(closed.nextActionCompleted, true);
 });
 
+test("schedule type never overrides the persisted application stage", () => {
+  const testApplication = initialApplications.find(
+    (application) => application.id === "musinsa",
+  );
+  assert.ok(testApplication);
+  assert.equal(getApplicationProgressStatus(testApplication), "test");
+  assert.equal(
+    getApplicationProgressStatus(transitionStatus(testApplication, "screening")),
+    "application",
+  );
+});
+
 test("schedule taxonomy covers every visible branch and ignores stale status", () => {
   const scheduled = filterScheduledApplications(initialApplications, "all");
   const visibleTypes = new Set(
@@ -461,297 +793,10 @@ test("schedule taxonomy covers every visible branch and ignores stale status", (
   );
 });
 
-test("application reducer applies representative user actions", () => {
-  const event = {
-    id: "test-event",
-    type: "task",
-    title: "테스트 변경",
-    description: "사용자 동작을 재현합니다.",
-    occurredAt: "2026-08-16T12:00:00+09:00",
-  };
-  const change = {
-    id: "test-change",
-    title: "검토 상태",
-    description: "확인 필요 → 확인 완료",
-    occurredAt: "2026-08-16T12:00:00+09:00",
-  };
-  let state = initialApplications;
-  const tossInitialActivityCount =
-    state.find((application) => application.id === "toss-payments")
-      ?.activities.length ?? 0;
-
-  state = applicationReducer(state, {
-    type: "mark-reviewed",
-    id: "toss-payments",
-    changes: [change],
-  });
-  const reviewed = state.find(
-    (application) => application.id === "toss-payments",
-  );
-  assert.equal(reviewed?.needsReview, false);
-  assert.equal(reviewed?.activities.length, tossInitialActivityCount);
-  assert.equal(reviewed?.changes.length, 1);
-
-  state = applicationReducer(state, {
-    type: "mark-reviewed",
-    id: "toss-payments",
-    changes: [change],
-  });
-  const reviewedAgain = state.find(
-    (application) => application.id === "toss-payments",
-  );
-  assert.strictEqual(reviewedAgain, reviewed);
-
-  state = applicationReducer(state, {
-    type: "complete-next-action",
-    id: "toss-payments",
-    activity: event,
-    changes: [
-      {
-        ...change,
-        id: "test-change-task",
-        title: "일정 상태",
-        description: "미완료 → 완료",
-      },
-    ],
-  });
-  const completed = state.find(
-    (application) => application.id === "toss-payments",
-  );
-  assert.equal(completed?.nextActionCompleted, true);
-  assert.equal(completed?.activities.length, tossInitialActivityCount + 1);
-  assert.equal(completed?.changes.length, 2);
-
-  state = applicationReducer(state, {
-    type: "complete-next-action",
-    id: "toss-payments",
-    activity: event,
-    changes: [{ ...change, id: "duplicate-task-change" }],
-  });
-  const completedAgain = state.find(
-    (application) => application.id === "toss-payments",
-  );
-  assert.strictEqual(completedAgain, completed);
-
-  state = applicationReducer(state, {
-    type: "save-schedule",
-    id: "toss-payments",
-    schedule: {
-      nextActionAt: "2026-09-03",
-      nextActionTitle: "과제 제출",
-      scheduleType: "test",
-    },
-    activity: event,
-    changes: [
-      {
-        ...change,
-        id: "test-change-schedule-title",
-        title: "일정명",
-        description: "내용 없음 → 과제 제출",
-      },
-      {
-        ...change,
-        id: "test-change-schedule-date",
-        title: "일정일",
-        description: "2026-08-29 → 2026-09-03",
-      },
-      {
-        ...change,
-        id: "test-change-schedule-open",
-        title: "일정 상태",
-        description: "완료 → 미완료",
-      },
-    ],
-  });
-  const rescheduled = state.find(
-    (application) => application.id === "toss-payments",
-  );
-  assert.equal(rescheduled?.nextActionAt, "2026-09-03");
-  assert.equal(rescheduled?.nextActionTitle, "과제 제출");
-  assert.equal(rescheduled?.nextActionCompleted, false);
-  assert.equal(rescheduled?.changes.length, 5);
-
-  const rescheduledActivityId = rescheduled?.activities[0]?.id;
-  assert.ok(rescheduledActivityId);
-  state = applicationReducer(state, {
-    type: "delete-activity",
-    id: "toss-payments",
-    activityId: rescheduledActivityId,
-    changes: [
-      {
-        ...change,
-        id: "test-change-delete-activity",
-        title: "진행 타임라인",
-        description: "일정을 수정했습니다 → 삭제됨",
-      },
-    ],
-  });
-  const activityDeleted = state.find(
-    (application) => application.id === "toss-payments",
-  );
-  assert.equal(
-    activityDeleted?.activities.some(
-      (activity) => activity.id === rescheduledActivityId,
-    ),
-    false,
-  );
-  assert.equal(activityDeleted?.changes.length, 6);
-  assert.equal(activityDeleted?.changes[0]?.title, "진행 타임라인");
-
-  const musinsaInitialActivityCount =
-    state.find((application) => application.id === "musinsa")?.activities
-      .length ?? 0;
-  state = applicationReducer(state, {
-    type: "save-memo",
-    id: "musinsa",
-    memo: "코딩 테스트 회고",
-    changes: [
-      {
-        ...change,
-        title: "메모",
-        description: "기존 메모 → 코딩 테스트 회고",
-      },
-    ],
-  });
-  const memoEdited = state.find(
-    (application) => application.id === "musinsa",
-  );
-  assert.equal(memoEdited?.memo, "코딩 테스트 회고");
-  assert.equal(memoEdited?.activities.length, musinsaInitialActivityCount);
-  assert.equal(memoEdited?.changes.length, 1);
-
-  state = applicationReducer(state, {
-    type: "save-memo",
-    id: "musinsa",
-    memo: "코딩 테스트 회고",
-    changes: [{ ...change, id: "duplicate-memo-change" }],
-  });
-  const memoEditedAgain = state.find(
-    (application) => application.id === "musinsa",
-  );
-  assert.strictEqual(memoEditedAgain, memoEdited);
-
-  state = applicationReducer(state, {
-    type: "update-details",
-    id: "musinsa",
-    details: {
-      company: "무신사 스토어",
-      position: "Backend Engineer",
-      location: "서울 성수동",
-      employmentType: "정규직",
-      appliedAt: "2026-08-20",
-    },
-    changes: [
-      {
-        ...change,
-        id: "test-change-company",
-        title: "회사",
-        description: "무신사 → 무신사 스토어",
-      },
-      {
-        ...change,
-        id: "test-change-location",
-        title: "근무지",
-        description: "서울 성동구 → 서울 성수동",
-      },
-    ],
-  });
-  const edited = state.find((application) => application.id === "musinsa");
-  assert.equal(edited?.company, "무신사 스토어");
-  assert.equal(edited?.location, "서울 성수동");
-  assert.equal(edited?.activities.length, musinsaInitialActivityCount);
-  assert.deepEqual(
-    edited?.changes.slice(0, 2).map((item) => item.title),
-    ["회사", "근무지"],
-  );
-  assert.equal(edited?.changes.length, 3);
-
-  state = applicationReducer(state, {
-    type: "update-details",
-    id: "musinsa",
-    details: {
-      company: "무신사 스토어",
-      position: "Backend Engineer",
-      location: "서울 성수동",
-      employmentType: "정규직",
-      appliedAt: "2026-08-20",
-    },
-    changes: [{ ...change, id: "duplicate-details-change" }],
-  });
-  const editedAgain = state.find(
-    (application) => application.id === "musinsa",
-  );
-  assert.strictEqual(editedAgain, edited);
-
-  state = applicationReducer(state, {
-    type: "update-status",
-    id: "daangn",
-    status: "rejected",
-    activity: { ...event, type: "status" },
-    changes: [
-      {
-        ...change,
-        id: "status-change",
-        title: "진행 상태",
-        description: "면접 진행 → 전형 종료",
-      },
-      change,
-    ],
-  });
-  const closed = state.find((application) => application.id === "daangn");
-  assert.equal(closed?.result, "rejected");
-  assert.equal(closed?.nextActionCompleted, false);
-  assert.equal(closed?.changes.length, 2);
-  assert.deepEqual(
-    closed?.changes.map((item) => item.title),
-    ["진행 상태", "검토 상태"],
-  );
-
-  state = applicationReducer(state, {
-    type: "update-status",
-    id: "daangn",
-    status: "rejected",
-    activity: { ...event, id: "duplicate-status-event", type: "status" },
-    changes: [{ ...change, id: "duplicate-status-change" }],
-  });
-  const closedAgain = state.find(
-    (application) => application.id === "daangn",
-  );
-  assert.strictEqual(closedAgain, closed);
-
-  const added = createManualApplication(
-    { company: "새 회사", position: "Backend Engineer", stage: "applied" },
-    "new-application",
-    "2026-08-16T12:00:00+09:00",
-    { ...event, type: "status" },
-  );
-  state = applicationReducer(state, { type: "add", application: added });
-  assert.equal(state[0].id, "new-application");
-  assert.equal(state[0].source, "직접 추가");
-  assert.equal(state[0].emails.length, 0);
-  assert.equal(state[0].changes.length, 0);
-});
-
 test("Seoul date keys stay correct across the UTC midnight boundary", () => {
   const afterSeoulMidnight = "2026-08-15T15:30:00.000Z";
   assert.equal(seoulDateKey(afterSeoulMidnight), "2026-08-16");
   assert.equal(fullDate(afterSeoulMidnight), "2026년 8월 16일");
-
-  const event = {
-    id: "midnight-event",
-    type: "status",
-    title: "자정 경계 지원",
-    description: "서울 날짜를 사용합니다.",
-    occurredAt: afterSeoulMidnight,
-  };
-  const application = createManualApplication(
-    { company: "자정 테스트", position: "Engineer", stage: "applied" },
-    "midnight-application",
-    afterSeoulMidnight,
-    event,
-  );
-  assert.equal(application.appliedAt, "2026-08-16");
-  assert.equal(application.nextActionAt, "2026-08-16");
 
   const mixedOffsets = [
     { occurredAt: "2026-08-16T09:00:00+09:00" },

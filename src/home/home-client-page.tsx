@@ -3,39 +3,112 @@
 import { Button, StatusIndicator } from "@measure-twice/react";
 import { ChevronRight } from "lucide-react";
 import Link from "next/link";
+import { useCallback, useEffect, useState } from "react";
 import { useAccountSettings } from "../settings/account-settings-provider";
-import { useApplications } from "../applications/application-provider";
 import { CalloutBanner } from "../ui/callout-banner";
 import {
-  type Application,
-  applicationDisplayStatusLabel,
-  applicationStatusBadgeTone,
-  compareOccurredAtDesc,
+  applicationStatusDisplayLabel,
+  applicationStatusTone,
   fullDate,
   scheduleTypeLabel,
 } from "../applications/application-data";
+import {
+  completeScheduleByVersion,
+  fetchHomeSummary,
+  type HomeSummary,
+} from "../applications/jobvis-api-client";
+import { invalidateJobvisApplications } from "../api/jobvis-data-events";
+import { MutationAttemptRegistry } from "../api/mutation-attempts";
 import { cn } from "../ui/class-names";
 import styles from "./home.module.scss";
-import { buildRuleBasedHomeSummary } from "./home-summary";
 
 type HomeClientPageProps = {
-  today: string;
   todayLabel: string;
 };
 
-function latestActivityTitle(application: Application) {
-  return [...application.activities].sort(compareOccurredAtDesc)[0]?.title ??
-    application.source;
+function briefingMessage(summary: HomeSummary) {
+  if (summary.briefing.reason === "needsReview") {
+    return `지원자님, 확인 필요한 지원 ${summary.briefing.count}개가 있어요. 오늘은 이 항목부터 보면 좋아요.`;
+  }
+  if (summary.briefing.reason === "openTask") {
+    return `지원자님, 오늘 먼저 처리할 항목 ${summary.briefing.count}개가 있어요.`;
+  }
+  if (summary.briefing.reason === "upcomingSchedule") {
+    return "지원자님, 급한 할 일은 없어요. 이번 주 일정만 가볍게 확인해볼까요?";
+  }
+  return "지원자님, 오늘은 급한 일정 없이 지원 흐름만 가볍게 보면 돼요.";
 }
 
 export default function HomeClientPage({
-  today,
   todayLabel,
 }: HomeClientPageProps) {
-  const { applications, completeNextAction } = useApplications();
   const { mailConnection } = useAccountSettings();
-  const summary = buildRuleBasedHomeSummary(applications, today);
+  const [summary, setSummary] = useState<HomeSummary | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [mutationAttempts] = useState(() => new MutationAttemptRegistry());
   const showMailConnectionBanner = !mailConnection;
+
+  const loadSummary = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const response = await fetchHomeSummary(signal);
+      setSummary(response);
+      setErrorMessage(null);
+      return response;
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return null;
+      }
+      setErrorMessage(
+        error instanceof Error ? error.message : "홈 요약을 불러오지 못했습니다.",
+      );
+      return null;
+    }
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const frame = requestAnimationFrame(() => void loadSummary(controller.signal));
+    return () => {
+      cancelAnimationFrame(frame);
+      controller.abort();
+    };
+  }, [loadSummary]);
+
+  async function completePriority(applicationId: string, version: number) {
+    const key = `${applicationId}:complete-schedule`;
+    const mutationId = mutationAttempts.idFor(key, [version]);
+    try {
+      await completeScheduleByVersion(applicationId, version, mutationId);
+      mutationAttempts.clear(key, mutationId);
+      invalidateJobvisApplications();
+      await loadSummary();
+    } catch (error) {
+      const recoveredSummary = await loadSummary();
+      const recoveredItem = recoveredSummary?.priorityItems.find(
+        (item) => item.applicationId === applicationId,
+      );
+      if (
+        recoveredSummary !== null &&
+        (!recoveredItem || recoveredItem.applicationVersion !== version)
+      ) {
+        mutationAttempts.clear(key, mutationId);
+      }
+      setErrorMessage(
+        error instanceof Error ? error.message : "일정을 완료하지 못했습니다.",
+      );
+    }
+  }
+
+  if (!summary) {
+    return (
+      <main id="main-content" className={cn("main-content", styles["home-page"])}>
+        <section className="panel" aria-busy={!errorMessage}>
+          <h1>{errorMessage ? "홈 요약을 불러오지 못했습니다." : "홈 요약을 불러오는 중입니다."}</h1>
+          {errorMessage ? <p>{errorMessage}</p> : null}
+        </section>
+      </main>
+    );
+  }
 
   return (
     <main
@@ -52,7 +125,7 @@ export default function HomeClientPage({
           <p className="eyebrow">{todayLabel}</p>
           <h1 className="visually-hidden">홈</h1>
           <p className={styles["home-assistant-note"]}>
-            <span>{summary.briefing.message}</span>
+            <span>{briefingMessage(summary)}</span>
           </p>
         </div>
       </section>
@@ -83,16 +156,19 @@ export default function HomeClientPage({
         </div>
         <div className={styles["priority-list"]}>
           {summary.priorityItems.map(
-            ({ application, label, detail, canComplete }) => (
+            (item) => {
+              const label = item.reason === "needsReview" ? "확인 필요" : item.reason === "overdue" ? "기한 경과" : "오늘";
+              const detail = item.reason === "needsReview" ? "자동 분류와 상태를 확인해 주세요." : `${item.scheduleType ? scheduleTypeLabel(item.scheduleType) : "지원"} 일정`;
+              return (
               <div
                 className={styles["priority-item"]}
-                key={`${label}-${application.id}`}
+                key={`${label}-${item.applicationId}`}
               >
                 <span
                   className="company-monogram"
                   aria-hidden="true"
                 >
-                  {application.company.slice(0, 1)}
+                  {item.company.slice(0, 1)}
                 </span>
                 <div>
                   <span
@@ -111,35 +187,36 @@ export default function HomeClientPage({
                   >
                     {label}
                   </span>
-                  <strong>{application.company}</strong>
+                  <strong>{item.company}</strong>
                   <p>
-                    {application.position} · {detail}
+                    {item.position} · {detail}
                   </p>
-                  {application.nextActionAt ? (
-                    <small>{fullDate(application.nextActionAt)}</small>
+                  {item.nextActionAt ? (
+                    <small>{fullDate(item.nextActionAt)}</small>
                   ) : null}
                 </div>
-                {canComplete ? (
+                {item.canComplete ? (
                   <Button
                     size="sm"
                     tone="neutral"
                     variant="outline"
-                    onClick={() => completeNextAction(application.id)}
+                    onClick={() => completePriority(item.applicationId, item.applicationVersion)}
                   >
                     일정 완료
                   </Button>
                 ) : (
                   <Link
                     className={styles["priority-link"]}
-                    href={`/applications/${application.id}`}
-                    aria-label={`${application.company} 지원 상세 보기`}
+                    href={`/applications/${item.applicationId}`}
+                    aria-label={`${item.company} 지원 상세 보기`}
                     title="지원 상세 보기"
                   >
                     <ChevronRight aria-hidden="true" />
                   </Link>
                 )}
               </div>
-            ),
+              );
+            },
           )}
           {summary.priorityItems.length === 0 ? (
             <div className={styles["empty-review"]}>
@@ -161,22 +238,22 @@ export default function HomeClientPage({
           </Link>
         </div>
         <div className={styles["agenda-list"]}>
-          {summary.upcomingSchedules.slice(0, 5).map((application) => (
+          {summary.upcomingSchedules.map((schedule) => (
             <Link
-              href={`/applications/${application.id}`}
+              href={`/applications/${schedule.applicationId}`}
               className={styles["agenda-row"]}
-              key={application.id}
+              key={schedule.applicationId}
             >
               <span className={styles["date-block"]}>
-                <strong>{application.nextActionAt?.slice(8, 10)}</strong>
+                <strong>{schedule.date.slice(8, 10)}</strong>
                 <small>
-                  {Number(application.nextActionAt?.slice(5, 7))}월
+                  {Number(schedule.date.slice(5, 7))}월
                 </small>
               </span>
               <span>
-                <strong>{scheduleTypeLabel(application.scheduleType)}</strong>
+                <strong>{scheduleTypeLabel(schedule.scheduleType)}</strong>
                 <small>
-                  {application.company} · {application.position}
+                  {schedule.company} · {schedule.position}
                 </small>
               </span>
             </Link>
@@ -200,13 +277,12 @@ export default function HomeClientPage({
         </div>
         <div className={styles["home-support-list"]}>
           {summary.activeApplications.map((application) => {
-            const hasOpenSchedule =
-              application.nextActionAt && !application.nextActionCompleted;
+            const hasOpenSchedule = Boolean(application.nextActionAt);
             return (
               <Link
                 className={styles["support-row"]}
-                href={`/applications/${application.id}`}
-                key={application.id}
+                href={`/applications/${application.applicationId}`}
+                key={application.applicationId}
               >
                 <span>
                   <strong>{application.company}</strong>
@@ -216,14 +292,14 @@ export default function HomeClientPage({
                   className={cn(
                     "status-badge",
                     styles["support-status"],
-                    `status-badge--${applicationStatusBadgeTone(application)}`,
+                    `status-badge--${applicationStatusTone(application.status, application.needsReview)}`,
                   )}
                 >
-                  {applicationDisplayStatusLabel(application)}
+                  {applicationStatusDisplayLabel(application.status, application.needsReview)}
                 </span>
                 <span className={styles["support-activity"]}>
                   <small>최근 변화</small>
-                  <strong>{latestActivityTitle(application)}</strong>
+                  <strong>{application.latestActivityTitle}</strong>
                 </span>
                 <span
                   className={cn(

@@ -6,14 +6,24 @@ import {
   FileCheck2,
   UserRoundCheck,
 } from "lucide-react";
-import { useMemo, useState } from "react";
-import { useApplications } from "@/src/applications/application-provider";
-import { seoulDateKey, stageRank } from "@/src/applications/application-data";
+import { useEffect, useMemo, useState } from "react";
+import { seoulDateKey } from "@/src/applications/application-data";
+import {
+  fetchApplicationAnalytics,
+  type ApplicationAnalytics,
+} from "@/src/applications/jobvis-api-client";
 import { cn } from "@/src/ui/class-names";
 import styles from "./analytics.module.scss";
 
 const today = seoulDateKey();
 const [todayYear, todayMonth] = today.split("-").map(Number);
+const SOURCE_LABELS: Record<string, string> = {
+  gmail: "Gmail 메일",
+  naver: "Naver 메일",
+  outlook: "Outlook 메일",
+  manual: "직접 추가",
+  other: "기타",
+};
 const monthOptions = Array.from({ length: 6 }, (_, index) => {
   const date = new Date(Date.UTC(
     todayYear,
@@ -27,39 +37,46 @@ const monthOptions = Array.from({ length: 6 }, (_, index) => {
 });
 
 export default function AnalyticsPage() {
-  const { applications } = useApplications();
   const [range, setRange] = useState("180");
+  const [summary, setSummary] = useState<ApplicationAnalytics | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const periodApplications = useMemo(() => {
-    if (range === "all") return applications;
-
+  const from = useMemo(() => {
+    if (range === "all") return null;
     const cutoff = new Date(`${today}T00:00:00+09:00`);
     cutoff.setDate(cutoff.getDate() - (Number(range) - 1));
-    const cutoffKey = seoulDateKey(cutoff);
-    return applications.filter(
-      (application) => application.appliedAt >= cutoffKey,
-    );
-  }, [applications, range]);
+    return seoulDateKey(cutoff);
+  }, [range]);
 
-  const total = periodApplications.length;
-  const screened = periodApplications.filter(
-    (application) => application.screeningPassed,
-  ).length;
-  const interviewed = periodApplications.filter(
-    (application) =>
-      stageRank[application.highestStageReached] >= stageRank.interview,
-  ).length;
-  const offered = periodApplications.filter(
-    (application) => application.result === "offered",
-  ).length;
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetchApplicationAnalytics(from, today, controller.signal)
+      .then((response) => {
+        setSummary(response);
+        setErrorMessage(null);
+      })
+      .catch((error) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setErrorMessage(
+          error instanceof Error ? error.message : "지원 통계를 불러오지 못했습니다.",
+        );
+      });
+    return () => controller.abort();
+  }, [from]);
+
+  const total = summary?.total ?? 0;
+  const screened = summary?.screeningPassed ?? 0;
+  const interviewed = summary?.reachedInterview ?? 0;
+  const offered = summary?.offered ?? 0;
   const screeningRate = total ? Math.round((screened / total) * 100) : 0;
   const interviewRate = total ? Math.round((interviewed / total) * 100) : 0;
   const offerRate = total ? Math.round((offered / total) * 100) : 0;
-  const monthlyCounts = monthOptions.map(({ key }) => {
-    return periodApplications.filter((application) =>
-      application.appliedAt.startsWith(key),
-    ).length;
-  });
+  const flow = summary?.monthlyFlow ?? monthOptions.map(({ key }) => ({ month: key, count: 0 }));
+  const flowOptions = flow.map(({ month }) => ({
+    key: month,
+    label: `${Number(month.slice(5, 7))}월`,
+  }));
+  const monthlyCounts = flow.map((item) => item.count);
   const maxMonthlyCount = Math.max(...monthlyCounts, 1);
   const chartLeft = 32;
   const chartRight = 568;
@@ -67,7 +84,7 @@ export default function AnalyticsPage() {
   const chartBottom = 168;
   const chartPoints = monthlyCounts.map((count, index) => ({
     count,
-    label: monthOptions[index].label,
+    label: flowOptions[index].label,
     x:
       chartLeft +
       (index / (monthlyCounts.length - 1)) * (chartRight - chartLeft),
@@ -83,18 +100,7 @@ export default function AnalyticsPage() {
   }, "");
   const lastChartPoint = chartPoints[chartPoints.length - 1];
   const trendAreaPath = `${trendLinePath} L ${lastChartPoint.x} ${chartBottom} L ${chartPoints[0].x} ${chartBottom} Z`;
-  const sourceCounts = periodApplications.reduce<Record<string, number>>(
-    (counts, application) => {
-      const source = application.source.startsWith("Gmail")
-        ? "Gmail"
-        : application.source.startsWith("Naver")
-          ? "Naver 메일"
-          : "직접 추가";
-      counts[source] = (counts[source] ?? 0) + 1;
-      return counts;
-    },
-    {},
-  );
+  const sourceCounts = summary?.sourceCounts ?? {};
   const conversionMetrics = [
     {
       key: "screening",
@@ -147,6 +153,13 @@ export default function AnalyticsPage() {
           <option value="all">전체</option>
         </Select>
       </section>
+
+      {errorMessage ? (
+        <div className="empty-state" role="alert">
+          <strong>지원 통계를 불러오지 못했습니다.</strong>
+          <p>{errorMessage}</p>
+        </div>
+      ) : null}
 
       <section
         className={cn(
@@ -254,7 +267,7 @@ export default function AnalyticsPage() {
                       index === chartPoints.length - 1 && styles["is-current"],
                     )}
                     style={{ animationDelay: `${480 + index * 90}ms` }}
-                    key={monthOptions[index].key}
+                    key={flowOptions[index].key}
                   >
                     {index === chartPoints.length - 1 ? (
                       <circle
@@ -275,7 +288,7 @@ export default function AnalyticsPage() {
               </svg>
               <figcaption className={styles["analytics-trend-labels"]}>
                 {chartPoints.map((point, index) => (
-                  <span key={monthOptions[index].key}>
+                  <span key={flowOptions[index].key}>
                     <strong>{point.count}건</strong>
                     <small>{point.label}</small>
                   </span>
@@ -331,7 +344,7 @@ export default function AnalyticsPage() {
             {Object.entries(sourceCounts).map(([source, count]) => (
               <div key={source}>
                 <span>
-                  <strong>{source}</strong>
+                  <strong>{SOURCE_LABELS[source] ?? "기타"}</strong>
                   <small>{count}건</small>
                 </span>
                 <span className={styles["source-track"]}>
