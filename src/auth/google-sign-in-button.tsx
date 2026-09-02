@@ -126,7 +126,7 @@ export function GoogleSignInButton() {
       <Button
         tone="neutral"
         variant="outline"
-        onClick={() => signInDemo("google")}
+        onClick={signInDemo}
       >
         Google로 시작하기
       </Button>

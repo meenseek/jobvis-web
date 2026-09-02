@@ -42,8 +42,6 @@ API 상태로 다시 만들지 않습니다. 일정 종류는 지원 상태와 �
 - 첫 진입에서 `/api/auth/me`로 session을 확인합니다.
 - Google 로그인은 API의 provider capability, challenge, exchange를 거쳐 opaque session을
   발급합니다.
-- Kakao는 server-side authorization code 교환 경계가 없으므로 실제 API 모드에서
-  비활성화합니다.
 - mock/local 모드의 데모 사용자 정보만 local storage에 둘 수 있습니다.
 
 ## 홈 `/`

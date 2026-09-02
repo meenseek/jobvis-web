@@ -886,8 +886,6 @@ DELETE /api/v1/connections/{connectionId}
 Google 로그인에 필요한 `/api/v1/auth/challenges`, `/exchange`, `/me`, `/logout`은 현재
 web BFF에 연결되어 있습니다. session token은 browser JavaScript에 노출하지 않습니다.
 
-Kakao 버튼은 실제 API 모드에서 비활성 상태이므로 이번 API 범위에 포함하지 않습니다.
-
 ## mutation과 오류 계약
 
 application mutation과 수동 import 생성은 client가 만든 `mutationId`를

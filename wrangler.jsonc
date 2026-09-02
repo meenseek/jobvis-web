@@ -1,0 +1,21 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "jobvis-web",
+  "main": "vinext/server/fetch-handler",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "dist/client",
+    "not_found_handling": "none",
+    "binding": "ASSETS"
+  },
+  "vars": {
+    "JOBVIS_API_BASE_URL": "https://223-130-135-197.sslip.io",
+    "JOBVIS_API_MODE": "api",
+    "NEXT_PUBLIC_JOBVIS_API_MODE": "api",
+    "JOBVIS_WEB_ORIGIN": "https://jobvis-web.oneaway-official.workers.dev"
+  },
+  "observability": {
+    "enabled": true
+  }
+}

@@ -44,7 +44,7 @@ type AuthContextValue = {
     idToken: string,
     challenge: LoginChallenge,
   ) => Promise<void>;
-  signInDemo: (provider: AuthProviderId) => void;
+  signInDemo: () => void;
   retrySession: () => void;
   signOut: () => Promise<void>;
 };
@@ -54,7 +54,6 @@ type ApiAuthUser = components["schemas"]["AuthUser"];
 const MOCK_AUTH_STORAGE_KEY = "jobvis.mock-auth.user";
 const isMockMode = process.env.NEXT_PUBLIC_JOBVIS_API_MODE === "mock";
 const isLocalMode = process.env.NEXT_PUBLIC_JOBVIS_API_MODE === "local";
-const isSitesMode = process.env.NEXT_PUBLIC_JOBVIS_API_MODE === "sites";
 const isDemoMode = isMockMode || isLocalMode;
 const authBypass = process.env.NEXT_PUBLIC_JOBVIS_AUTH_BYPASS === "1";
 const bypassUser: AuthUser = {
@@ -90,18 +89,12 @@ function storeDemoUser(user: AuthUser | null) {
   window.localStorage.setItem(MOCK_AUTH_STORAGE_KEY, JSON.stringify(user));
 }
 
-function createDemoUser(provider: AuthProviderId): AuthUser {
-  return provider === "kakao"
-    ? {
-        id: "mock-kakao-user",
-        displayName: "카카오 데모 사용자",
-        primaryEmail: "mock.kakao@jobvis.example",
-      }
-    : {
-        id: "mock-google-user",
-        displayName: "구글 데모 사용자",
-        primaryEmail: "mock.google@jobvis.example",
-      };
+function createDemoUser(): AuthUser {
+  return {
+    id: "mock-google-user",
+    displayName: "구글 데모 사용자",
+    primaryEmail: "mock.google@jobvis.example",
+  };
 }
 
 async function responseMessage(response: Response) {
@@ -143,7 +136,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (cancelled) return;
         if (response.status === 401) {
           setUser(null);
-          setStatus(isSitesMode ? "unavailable" : "unauthenticated");
+          setStatus("unauthenticated");
           return;
         }
         if (!response.ok) {
@@ -173,7 +166,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const expireSession = useCallback(() => {
     setUser(null);
-    setStatus(isSitesMode ? "unavailable" : "unauthenticated");
+    setStatus("unauthenticated");
   }, []);
 
   const retrySession = useCallback(() => {
@@ -198,7 +191,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<AuthContextValue>(
     () => ({
-      canSignOut: !isSitesMode,
+      canSignOut: true,
       isAuthenticated: status === "authenticated",
       isDemoMode,
       status,
@@ -234,9 +227,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(normalizeUser(session.user));
         setStatus("authenticated");
       },
-      signInDemo(provider) {
+      signInDemo() {
         if (!isDemoMode) return;
-        const nextUser = createDemoUser(provider);
+        const nextUser = createDemoUser();
         setUser(nextUser);
         setStatus("authenticated");
         storeDemoUser(nextUser);

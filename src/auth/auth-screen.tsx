@@ -1,13 +1,10 @@
 "use client";
 
-import { Button } from "@measure-twice/react";
+import Link from "next/link";
 import { GoogleSignInButton } from "./google-sign-in-button";
-import { useAuth } from "./auth-provider";
 import styles from "./auth.module.scss";
 
 export function AuthScreen() {
-  const { isDemoMode, signInDemo } = useAuth();
-
   return (
     <main className={styles["auth-page"]} id="main-content">
       <section className={styles["auth-panel"]} aria-labelledby="auth-title">
@@ -33,18 +30,15 @@ export function AuthScreen() {
 
         <div className={styles["auth-social-actions"]}>
           <GoogleSignInButton />
-          <Button
-            tone="neutral"
-            variant="outline"
-            disabled={!isDemoMode}
-            onClick={() => signInDemo("kakao")}
-          >
-            {isDemoMode ? "Kakao로 시작하기" : "Kakao 로그인 준비 중"}
-          </Button>
         </div>
 
         <p className={styles["auth-consent-copy"]}>
           계속하면 Jobvis 계정이 생성되거나 기존 계정으로 로그인됩니다.
+          <span className={styles["auth-public-links"]}>
+            <Link href="/about">서비스 소개</Link>
+            <Link href="/privacy">개인정보처리방침</Link>
+            <Link href="/terms">서비스 약관</Link>
+          </span>
         </p>
       </section>
     </main>

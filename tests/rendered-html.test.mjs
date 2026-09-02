@@ -35,11 +35,6 @@ import {
   mailProviderLabel,
 } from "../src/settings/settings-state.ts";
 import { MutationAttemptRegistry } from "../src/api/mutation-attempts.ts";
-import {
-  appendTrustedSiteGatewayHeaders,
-  TrustedSiteGatewayConfigurationError,
-  TrustedSiteIdentityRequiredError,
-} from "../src/auth/trusted-site-gateway.ts";
 
 const projectRoot = new URL("../", import.meta.url);
 const [currentYear, currentMonth] = seoulDateKey().split("-");
@@ -49,63 +44,6 @@ let nextServerOutput = "";
 let fakeJobvisApi;
 let fakeJobvisApiBaseUrlPromise;
 const fakeJobvisApiRequests = [];
-
-test("Sites gateway forwards only platform identity with a server secret", () => {
-  const previousMode = process.env.JOBVIS_API_MODE;
-  const previousSecret = process.env.JOBVIS_TRUSTED_SITE_SECRET;
-  try {
-    process.env.JOBVIS_API_MODE = "sites";
-    process.env.JOBVIS_TRUSTED_SITE_SECRET =
-      "test-only-site-gateway-secret-32-bytes";
-
-    const headers = new Headers();
-    appendTrustedSiteGatewayHeaders(
-      {
-        headers: new Headers({
-          "oai-authenticated-user-id": "sites-user-1",
-          "x-jobvis-site-user-id": "forged-user",
-        }),
-      },
-      headers,
-    );
-    assert.equal(headers.get("x-jobvis-site-user-id"), "sites-user-1");
-    assert.equal(
-      headers.get("x-jobvis-site-gateway-secret"),
-      "test-only-site-gateway-secret-32-bytes",
-    );
-
-    assert.throws(
-      () =>
-        appendTrustedSiteGatewayHeaders(
-          { headers: new Headers() },
-          new Headers(),
-        ),
-      TrustedSiteIdentityRequiredError,
-    );
-
-    process.env.JOBVIS_TRUSTED_SITE_SECRET = "too-short";
-    assert.throws(
-      () =>
-        appendTrustedSiteGatewayHeaders(
-          {
-            headers: new Headers({
-              "oai-authenticated-user-id": "sites-user-1",
-            }),
-          },
-          new Headers(),
-        ),
-      TrustedSiteGatewayConfigurationError,
-    );
-  } finally {
-    if (previousMode === undefined) delete process.env.JOBVIS_API_MODE;
-    else process.env.JOBVIS_API_MODE = previousMode;
-    if (previousSecret === undefined) {
-      delete process.env.JOBVIS_TRUSTED_SITE_SECRET;
-    } else {
-      process.env.JOBVIS_TRUSTED_SITE_SECRET = previousSecret;
-    }
-  }
-});
 
 test("mutation ids belong to an exact request attempt", () => {
   let sequence = 0;
@@ -159,10 +97,7 @@ async function startFakeJobvisApi() {
       });
 
       if (request.method === "GET" && request.url === "/api/v1/auth/providers") {
-        jsonResponse(response, 200, [
-          { provider: "google", configured: true },
-          { provider: "kakao", configured: false },
-        ]);
+        jsonResponse(response, 200, [{ provider: "google", configured: true }]);
         return;
       }
       if (request.method === "POST" && request.url === "/api/v1/auth/challenges") {
@@ -315,6 +250,7 @@ async function readStyleBundle() {
     "src/ui/shared.scss",
     "src/ui/callout-banner.module.scss",
     "src/auth/auth.module.scss",
+    "src/public/public-page.module.scss",
     "src/shell/shell.module.scss",
     "src/home/home.module.scss",
     "src/applications/applications.module.scss",
@@ -333,6 +269,9 @@ async function readStyleBundle() {
 
 const routes = [
   ["/", /홈 요약을 불러오는 중입니다/],
+  ["/about", /구직 활동의 흐름을 한곳에서 정리하세요/],
+  ["/privacy", /개인정보처리방침/],
+  ["/terms", /서비스 약관/],
   ["/applications", /지원 목록/],
   ["/applications?q=무신사&status=test", /지원 목록/],
   ["/applications/musinsa", /지원 상세 정보를 불러오는 중입니다/],
@@ -495,6 +434,11 @@ test("uses real route navigation and shared application state", async () => {
     authProvider,
     authScreen,
     googleButton,
+    googleAnalytics,
+    appBoundary,
+    aboutPage,
+    privacyPage,
+    termsPage,
     homePage,
     homeClientPage,
     applicationsPage,
@@ -518,6 +462,11 @@ test("uses real route navigation and shared application state", async () => {
     readFile(new URL("../src/auth/auth-provider.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/auth/auth-screen.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/auth/google-sign-in-button.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/analytics/google-analytics.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/shell/app-boundary.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/about/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/privacy/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/terms/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/home/home-client-page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/applications/applications-client-page.tsx", import.meta.url), "utf8"),
@@ -571,10 +520,7 @@ test("uses real route navigation and shared application state", async () => {
   assert.match(authProvider, /keepalive: true/);
   assert.match(authProvider, /expireSession/);
   assert.match(authProvider, /response\.status === 401/);
-  assert.match(
-    authProvider,
-    /isSitesMode \? "unavailable" : "unauthenticated"/,
-  );
+  assert.match(authProvider, /setStatus\("unauthenticated"\)/);
   assert.match(authProvider, /setStatus\("unavailable"\)/);
   assert.match(authProvider, /retrySession/);
   assert.match(authProvider, /createDemoUser/);
@@ -584,10 +530,30 @@ test("uses real route navigation and shared application state", async () => {
   assert.match(googleButton, /accounts\.google\.com\/gsi\/client/);
   assert.match(googleButton, /NEXT_PUBLIC_JOBVIS_GOOGLE_CLIENT_ID/);
   assert.match(googleButton, /nonce: challenge\.nonce/);
-  assert.match(authScreen, /Kakao 로그인 준비 중/);
+  assert.doesNotMatch(authScreen, /Kakao/);
   assert.match(authScreen, /기존 계정으로 로그인됩니다/);
+  assert.match(authScreen, /href="\/privacy"/);
   assert.doesNotMatch(authScreen, /auth-mode-tabs/);
   assert.doesNotMatch(authScreen, /이메일/);
+  assert.match(appBoundary, /publicPaths\.has\(pathname\)/);
+  assert.match(appBoundary, /"\/about", "\/privacy", "\/terms"/);
+  assert.match(appBoundary, /<AuthProvider>/);
+  assert.match(appBoundary, /<ApplicationProvider>/);
+  assert.match(appBoundary, /<AccountSettingsProvider>/);
+  assert.match(aboutPage, /Google 로그인에서는 계정을 식별/);
+  assert.match(aboutPage, /href="\/privacy"/);
+  assert.match(privacyPage, /Google 로그인/);
+  assert.match(privacyPage, /Google Analytics 4/);
+  assert.match(privacyPage, /Google 비밀번호/);
+  assert.match(privacyPage, /메일 원문과 첨부파일은 저장하지 않습니다/);
+  assert.match(privacyPage, /AES-256-GCM/);
+  assert.match(termsPage, /채용 결과를 보장하거나/);
+  assert.match(googleAnalytics, /NEXT_PUBLIC_JOBVIS_GA_MEASUREMENT_ID/);
+  assert.match(googleAnalytics, /send_page_view: false/);
+  assert.match(googleAnalytics, /"event", "page_view"/);
+  assert.match(googleAnalytics, /page_path: pathname/);
+  assert.doesNotMatch(googleAnalytics, /searchParams/);
+  assert.match(packageJson, /JOBVIS_GA_MEASUREMENT_ID is required/);
   assert.match(provider, /updateStatus/);
   assert.match(provider, /JobvisAuthenticationRequiredError/);
   assert.match(provider, /expireSession\(\)/);
@@ -668,8 +634,7 @@ test("uses real route navigation and shared application state", async () => {
     ].join("\n"),
     /className="eyebrow">[A-Z][^<]*</,
   );
-  assert.match(layout, /<ApplicationProvider>/);
-  assert.match(layout, /<AccountSettingsProvider>/);
+  assert.match(layout, /<AppBoundary>/);
   assert.match(layout, /suppressHydrationWarning/);
   assert.match(layout, /@measure-twice\/react\/styles\.css/);
   assert.match(layout, /JOBVIS_WEB_ORIGIN/);
@@ -699,7 +664,8 @@ test("uses real route navigation and shared application state", async () => {
   );
   assert.match(packageJson, /NEXT_PUBLIC_JOBVIS_AUTH_BYPASS=1 npm run build/);
   assert.match(packageJson, /"build": "next build"/);
-  assert.match(packageJson, /"build:sites": "vinext build"/);
+  assert.match(packageJson, /"build:cloudflare"/);
+  assert.match(packageJson, /"deploy:cloudflare"/);
   assert.match(packageJson, /"vinext"/);
   assert.match(packageJson, /"vite"/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
@@ -709,8 +675,6 @@ test("uses real route navigation and shared application state", async () => {
   assert.match(apiRoute, /handleMockJobvisApi/);
   assert.match(apiRoute, /x-jobvis-user-id/);
   assert.match(apiRoute, /API_MODE === "local"/);
-  assert.match(apiRoute, /API_MODE === "sites"/);
-  assert.match(apiRoute, /appendTrustedSiteGatewayHeaders/);
   assert.match(apiRoute, /LOOPBACK_API_HOSTS/);
   assert.match(apiRoute, /!isLoopbackApi\(\)/);
   assert.match(apiRoute, /PROXIED_RESOURCE_ROOTS/);
@@ -719,8 +683,6 @@ test("uses real route navigation and shared application state", async () => {
   assert.doesNotMatch(apiRoute, /request\.headers\.get\("authorization"\)/);
   assert.doesNotMatch(apiRoute, /request\.headers\.get\("cookie"\)/);
   assert.match(authApiRoute, /setSessionCookie/);
-  assert.match(authApiRoute, /usesTrustedSiteGateway/);
-  assert.match(authApiRoute, /appendTrustedSiteGatewayHeaders/);
   assert.match(authApiRoute, /retry-after/);
   assert.match(authApiRoute, /setSessionCookie\(response, session\.accessToken/);
   assert.doesNotMatch(authApiRoute, /NextResponse\.json\(session\)/);
@@ -754,7 +716,6 @@ test("uses real route navigation and shared application state", async () => {
   assert.match(authProvider, /body\?\.detail/);
   assert.match(apiClient, /deleteApplicationActivity/);
   assert.doesNotMatch(styles, /thead\s*\{\s*display:\s*none/);
-  await assert.rejects(access(new URL("../app/_sites-preview", projectRoot)));
   await assert.rejects(access(new URL("../app/application-provider.tsx", projectRoot)));
   await assert.rejects(access(new URL("../app/data.ts", projectRoot)));
   await assert.rejects(access(new URL("../app/app-shell.tsx", projectRoot)));

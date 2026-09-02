@@ -17,10 +17,9 @@ Jobvis는 메일에서 수집한 지원 기록, 진행 상태와 일정을 정�
 [`docs/features.md`](docs/features.md)에 정리합니다.
 
 처음 진입하면 로그인 화면을 먼저 보여줍니다. API 모드에서는 Google Identity
-Services가 받은 ID token을 `jobvis-api`의 challenge/exchange API로 검증하고, API가
-발급한 opaque session은 Next Route Handler가 `HttpOnly` 쿠키로 보관합니다. 브라우저
-JavaScript에는 session token을 노출하지 않습니다. Kakao 로그인은 서버 측 authorization
-code 교환 경계가 추가될 때까지 비활성화합니다.
+Services의 ID token을 `jobvis-api`의 challenge/exchange API로 검증합니다. API가 발급한
+opaque session은 Next Route Handler가 `HttpOnly` 쿠키로 보관하고 브라우저
+JavaScript에는 session token을 노출하지 않습니다.
 
 지원 추가, 상태 변경, 메모 저장, 할 일 완료는 `jobvis-api`의 지원 이력 API에
 저장됩니다. 실제 API/local 모드에서는 API가 확인한 성공 응답만 화면 상태에 반영하며,
@@ -52,6 +51,7 @@ npm run contract:generate
 
 - `app/`: Next.js 라우트, 레이아웃, 페이지, API Route Handler
 - `src/auth/`: Google 로그인, `HttpOnly` 세션 BFF와 mock/local 데모 게이트
+- `src/analytics/`: 쿼리 문자열과 사용자 ID를 제외한 GA4 화면 경로 측정
 - `src/shell/`: 사이드바, 상단바, 열린 상세 탭 등 앱 공통 프레임
 - `src/applications/`: 지원 이력 타입, 상태, Provider, URL 유틸, API client
 - `src/contracts/`: API 소유 OpenAPI에서 생성한 읽기 전용 TypeScript 계약
@@ -96,8 +96,8 @@ JOBVIS_LOCAL_USER_ID=11111111-1111-4111-8111-111111111111 npm run dev:local
 ```
 
 백엔드 없이 화면과 API 연동 흐름만 확인할 때는 메모리 기반 mock API로 실행할 수
-있습니다. 이 모드에서는 로그인 화면의 Google/Kakao 버튼이 실제 OAuth로 가지 않고
-데모 사용자로 바로 홈 화면에 진입합니다.
+있습니다. 이 모드에서는 로그인 화면의 Google 버튼이 실제 OAuth로 가지 않고 데모
+사용자로 바로 홈 화면에 진입합니다.
 
 ```bash
 npm run dev:mock
@@ -110,27 +110,31 @@ JOBVIS_API_MODE=mock NEXT_PUBLIC_JOBVIS_API_MODE=mock npm run dev
 JOBVIS_API_BASE_URL=http://127.0.0.1:8080 NEXT_PUBLIC_JOBVIS_API_MODE=api npm run dev
 ```
 
-private Sites 배포에서는 `JOBVIS_API_MODE=sites`를 사용합니다. Sites가 전달한
-`oai-authenticated-user-id`만 서버에서 읽고, Web과 API 양쪽에 같은 32바이트 이상의
-`JOBVIS_TRUSTED_SITE_SECRET`을 설정해 브라우저가 위조할 수 없는 서버 간 헤더로
-전달합니다. `NEXT_PUBLIC_JOBVIS_API_MODE=sites`도 함께 설정해 Sites가 소유한 인증을
-단일 로그인 경계로 사용합니다. 이 비밀은 `NEXT_PUBLIC_` 환경변수나 브라우저 응답에
-포함하지 않습니다. 첫 배포에서 발급된 HTTPS origin은 `JOBVIS_WEB_ORIGIN`에 설정해
-Open Graph와 X 미리보기 이미지의 절대 URL로 사용합니다.
+공개 웹은 Cloudflare Workers에 배포하고 Jobvis가 발급한 `HttpOnly` session cookie를
+단일 로그인 경계로 사용합니다. `wrangler.jsonc`는 공개 API 주소와 서버 실행 모드만
+소유하며 비밀값은 저장하지 않습니다. Google Web Client ID는 브라우저에 공개되는 값이므로
+`NEXT_PUBLIC_JOBVIS_GOOGLE_CLIENT_ID`로 빌드에 전달하고, 같은 값을 `jobvis-api`의
+`JOBVIS_GOOGLE_CLIENT_ID`에 설정합니다.
 
-Sites 배포에는 다음 서버 환경변수를 함께 설정합니다.
+Cloudflare 배포에는 다음 환경변수를 사용합니다.
 
 | 변수 | 값 |
 | --- | --- |
-| `JOBVIS_API_BASE_URL` | 모두의 AI 실험실 VM의 공개 API 주소(예: `https://api.jobvis.example`) |
-| `JOBVIS_API_MODE` | `sites` |
-| `NEXT_PUBLIC_JOBVIS_API_MODE` | `sites` |
-| `JOBVIS_TRUSTED_SITE_SECRET` | API `.env`와 동일한 서버 전용 비밀 |
-| `JOBVIS_WEB_ORIGIN` | 실제 Sites HTTPS origin |
+| `JOBVIS_API_BASE_URL` | NCP VM의 공개 API 주소(예: `https://api.jobvis.example`) |
+| `JOBVIS_API_MODE` | `api` |
+| `NEXT_PUBLIC_JOBVIS_API_MODE` | `api` |
+| `NEXT_PUBLIC_JOBVIS_GOOGLE_CLIENT_ID` | Google Web Client ID |
+| `NEXT_PUBLIC_JOBVIS_GA_MEASUREMENT_ID` | GA4 Web 데이터 스트림 측정 ID |
+| `JOBVIS_WEB_ORIGIN` | 실제 Workers HTTPS origin |
 
-API 주소에는 `/api/v1`이나 마지막 `/`를 붙이지 않습니다. API의 CORS·OAuth redirect 설정도
-동일한 `JOBVIS_WEB_ORIGIN`을 사용하며, VM용 Compose와 백업·90일 이전 절차는
+API 주소에는 `/api/v1`이나 마지막 `/`를 붙이지 않습니다. API의 CORS·OAuth redirect
+설정도 동일한 `JOBVIS_WEB_ORIGIN`을 사용합니다. VM용 Compose와 백업 절차는
 `jobvis-api/deploy/lab/README.md`가 소유합니다.
+
+```bash
+npm run test:cloudflare
+JOBVIS_GA_MEASUREMENT_ID=G-XXXXXXXXXX npm run deploy:cloudflare
+```
 
 검증은 다음 명령으로 수행합니다.
 

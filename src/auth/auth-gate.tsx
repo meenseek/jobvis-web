@@ -23,11 +23,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     return (
       <main className={styles["auth-loading"]} id="main-content">
         <div className={styles["auth-loading-content"]} role="alert">
-          <p>
-            {process.env.NEXT_PUBLIC_JOBVIS_API_MODE === "sites"
-              ? "Sites 인증 연결을 확인하지 못했습니다."
-              : "로그인 상태를 확인하지 못했습니다."}
-          </p>
+          <p>로그인 상태를 확인하지 못했습니다.</p>
           <Button tone="neutral" variant="outline" onClick={retrySession}>
             다시 시도
           </Button>

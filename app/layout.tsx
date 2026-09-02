@@ -2,11 +2,8 @@ import type { Metadata } from "next";
 import "pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css";
 import "@measure-twice/react/styles.css";
 import "./globals.scss";
-import { AuthGate } from "@/src/auth/auth-gate";
-import { AuthProvider } from "@/src/auth/auth-provider";
-import { AccountSettingsProvider } from "@/src/settings/account-settings-provider";
-import { AppShell } from "@/src/shell/app-shell";
-import { ApplicationProvider } from "@/src/applications/application-provider";
+import { GoogleAnalytics } from "@/src/analytics/google-analytics";
+import { AppBoundary } from "@/src/shell/app-boundary";
 
 const title = "Jobvis · 구직 활동 대시보드";
 const description =
@@ -70,15 +67,8 @@ export default function RootLayout({
   return (
     <html lang="ko" data-scroll-behavior="smooth" suppressHydrationWarning>
       <body suppressHydrationWarning>
-        <AuthProvider>
-          <AuthGate>
-            <AccountSettingsProvider>
-              <ApplicationProvider>
-                <AppShell>{children}</AppShell>
-              </ApplicationProvider>
-            </AccountSettingsProvider>
-          </AuthGate>
-        </AuthProvider>
+        <AppBoundary>{children}</AppBoundary>
+        <GoogleAnalytics />
       </body>
     </html>
   );

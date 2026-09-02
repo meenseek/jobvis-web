@@ -7,11 +7,6 @@ import {
   JOBVIS_SESSION_COOKIE,
   problemResponse,
 } from "@/src/auth/server-session";
-import {
-  appendTrustedSiteGatewayHeaders,
-  TrustedSiteGatewayConfigurationError,
-  TrustedSiteIdentityRequiredError,
-} from "@/src/auth/trusted-site-gateway";
 
 const API_BASE_URL =
   process.env.JOBVIS_API_BASE_URL?.replace(/\/$/, "") ??
@@ -52,8 +47,6 @@ function forwardHeaders(request: NextRequest) {
 
   if (API_MODE === "local") {
     headers.set("x-jobvis-user-id", LOCAL_USER_ID);
-  } else if (API_MODE === "sites") {
-    appendTrustedSiteGatewayHeaders(request, headers);
   } else {
     const token = request.cookies.get(JOBVIS_SESSION_COOKIE)?.value;
     if (token) headers.set("authorization", `Bearer ${token}`);
@@ -95,17 +88,7 @@ async function proxy(request: NextRequest, context: RouteContext) {
       body: hasBody ? await request.text() : undefined,
       cache: "no-store",
     });
-  } catch (error) {
-    if (error instanceof TrustedSiteIdentityRequiredError) {
-      return problemResponse(401, "Unauthorized", "사이트 로그인이 필요합니다.");
-    }
-    if (error instanceof TrustedSiteGatewayConfigurationError) {
-      return problemResponse(
-        503,
-        "Service Unavailable",
-        "Sites 인증 연결이 준비되지 않았습니다.",
-      );
-    }
+  } catch {
     return problemResponse(
       503,
       "Service Unavailable",

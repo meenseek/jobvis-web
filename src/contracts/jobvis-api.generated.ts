@@ -653,7 +653,7 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /** @enum {string} */
-        LoginProvider: "google" | "kakao";
+        LoginProvider: "google";
         LoginProviderResponse: {
             provider: components["schemas"]["LoginProvider"];
             configured: boolean;

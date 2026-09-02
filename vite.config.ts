@@ -1,5 +1,4 @@
 import vinext from "vinext";
-import { sites } from "@openai/sites-vite-plugin";
 import { defineConfig } from "vite";
 
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
@@ -17,13 +16,8 @@ export default defineConfig(async () => {
       : undefined,
     plugins: [
       vinext(),
-      sites(),
       cloudflare({
         viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
-        config: {
-          main: "./worker/index.ts",
-          compatibility_flags: ["nodejs_compat"],
-        },
       }),
     ],
   };

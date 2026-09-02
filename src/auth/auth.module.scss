@@ -102,6 +102,18 @@
   text-align: center;
 }
 
+.auth-public-links {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.auth-public-links a {
+  color: var(--mt-color-text);
+  text-underline-offset: 3px;
+}
+
 @media (max-width: 560px) {
   .auth-page {
     padding: 24px 16px;
