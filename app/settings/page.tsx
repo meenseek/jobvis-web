@@ -45,6 +45,8 @@ export default function SettingsPage() {
     setAutoSyncEnabled,
     startOAuth,
     syncMail,
+    importStatusExhausted,
+    retryImportStatus,
   } = useAccountSettings();
   const [connectDialogOpen, setConnectDialogOpen] = useState(false);
   const [mailAddress, setMailAddress] = useState("");
@@ -354,6 +356,17 @@ export default function SettingsPage() {
                 ? "동기화 중"
                 : "수동 동기화"}
             </Button>
+            {importRunActive && importStatusExhausted && (
+              <Button
+                size="sm"
+                tone="neutral"
+                variant="outline"
+                disabled={!connectionReady || busyAction !== null}
+                onClick={retryImportStatus}
+              >
+                상태 다시 확인
+              </Button>
+            )}
           </div>
         </article>
 

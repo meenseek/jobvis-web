@@ -16,7 +16,7 @@
     "start:local": "JOBVIS_API_MODE=local NEXT_PUBLIC_JOBVIS_API_MODE=local next start",
     "start:mock": "JOBVIS_API_MODE=mock NEXT_PUBLIC_JOBVIS_API_MODE=mock next start",
     "contract:generate": "openapi-typescript ../jobvis-api/openapi/jobvis-v1.yaml -o src/contracts/jobvis-api.generated.ts",
-    "test": "JOBVIS_API_MODE=api NEXT_PUBLIC_JOBVIS_API_MODE=mock NEXT_PUBLIC_JOBVIS_AUTH_BYPASS=1 npm run build -- --webpack && NEXT_PUBLIC_JOBVIS_AUTH_BYPASS=1 node --test tests/rendered-html.test.mjs && npm run test:cloudflare",
+    "test": "JOBVIS_API_MODE=api NEXT_PUBLIC_JOBVIS_API_MODE=mock NEXT_PUBLIC_JOBVIS_AUTH_BYPASS=1 npm run build -- --webpack && NEXT_PUBLIC_JOBVIS_AUTH_BYPASS=1 node --test tests/import-run-polling.test.mjs tests/rendered-html.test.mjs && npm run test:cloudflare",
     "test:cloudflare": "JOBVIS_GA_MEASUREMENT_ID=G-TEST000000 npm run build:cloudflare && node --test tests/cloudflare-runtime.test.mjs",
     "preview:cloudflare": "npm run build:cloudflare && vite preview",
     "deploy:cloudflare": "npm run build:cloudflare && wrangler deploy --config dist/server/wrangler.json",

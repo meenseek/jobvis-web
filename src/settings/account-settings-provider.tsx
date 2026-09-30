@@ -17,6 +17,7 @@ import {
 import { invalidateJobvisApplications } from "../api/jobvis-data-events";
 import { MutationAttemptRegistry } from "../api/mutation-attempts";
 import { useAuth } from "../auth/auth-provider";
+import { startImportRunPolling } from "./import-run-polling";
 import {
   beginMailOAuth,
   completeMailOAuth,
@@ -61,6 +62,8 @@ type AccountSettingsContextValue = {
   disconnectMail: () => Promise<boolean>;
   errorMessage: string | null;
   latestImportRun: ImportRun | null;
+  importStatusExhausted: boolean;
+  retryImportStatus: () => void;
   loadStatus: SettingsLoadStatus;
   mailConnection: ExternalConnection | null;
   reloadConnections: () => Promise<void>;
@@ -98,7 +101,7 @@ function mockConnection(
 }
 
 export function AccountSettingsProvider({ children }: { children: ReactNode }) {
-  const { expireSession } = useAuth();
+  const { expireSession, isAuthenticated } = useAuth();
   const [mailConnection, setMailConnection] =
     useState<ExternalConnection | null>(null);
   const [capabilities, setCapabilities] = useState<ConnectionCapability[]>([]);
@@ -108,6 +111,8 @@ export function AccountSettingsProvider({ children }: { children: ReactNode }) {
   const [busyAction, setBusyAction] = useState<SettingsAction>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [latestImportRun, setLatestImportRun] = useState<ImportRun | null>(null);
+  const [importStatusExhausted, setImportStatusExhausted] = useState(false);
+  const [pollingAttempt, setPollingAttempt] = useState(0);
   const [mutationAttempts] = useState(() => new MutationAttemptRegistry());
 
   const reportError = useCallback(
@@ -154,6 +159,7 @@ export function AccountSettingsProvider({ children }: { children: ReactNode }) {
       fetchLatestImportRun(controller.signal),
     ])
       .then(([nextCapabilities, connections, runPage]) => {
+        if (controller.signal.aborted) return;
         setCapabilities(nextCapabilities);
         const connection = connections[0] ?? null;
         setMailConnection(connection);
@@ -163,52 +169,66 @@ export function AccountSettingsProvider({ children }: { children: ReactNode }) {
         setLoadStatus("ready");
       })
       .catch((error: unknown) => {
-        if (error instanceof DOMException && error.name === "AbortError") return;
+        if (controller.signal.aborted) return;
         reportError(error, "메일 연결 상태를 불러오지 못했습니다.");
         setLoadStatus("error");
       });
     return () => controller.abort();
   }, [reportError]);
 
+  const connectionId = mailConnection?.id;
+  const canPoll = isAuthenticated && mailConnection?.status === "connected" && busyAction !== "disconnect";
+  const activeRunId = canPoll && latestImportRun && latestImportRun.connectionId === connectionId &&
+    !TERMINAL_RUN_STATUSES.has(latestImportRun.status) ? latestImportRun.id : null;
+  const terminalRunId = canPoll && latestImportRun && latestImportRun.connectionId === connectionId &&
+    TERMINAL_RUN_STATUSES.has(latestImportRun.status) ? latestImportRun.id : null;
+
   useEffect(() => {
-    if (
-      isMockMode ||
-      !latestImportRun ||
-      TERMINAL_RUN_STATUSES.has(latestImportRun.status)
-    ) {
-      return;
-    }
-    let active = true;
-    const timer = window.setTimeout(() => {
-      void fetchImportRun(latestImportRun.id)
-        .then(async (run) => {
-          if (!active) return;
-          setLatestImportRun(run);
-          if (TERMINAL_RUN_STATUSES.has(run.status)) {
-            await reloadConnections();
-            if (run.status === "completed") {
-              setErrorMessage(null);
-              invalidateJobvisApplications();
-            } else {
-              setErrorMessage(
-                run.errorCode
-                  ? `메일 동기화를 완료하지 못했습니다. (${run.errorCode})`
-                  : "메일 동기화를 완료하지 못했습니다.",
-              );
-            }
-          }
-        })
-        .catch((error: unknown) => {
-          if (active) {
-            reportError(error, "메일 동기화 상태를 확인하지 못했습니다.");
-          }
-        });
-    }, 1000);
-    return () => {
-      active = false;
-      window.clearTimeout(timer);
-    };
-  }, [latestImportRun, reloadConnections, reportError]);
+    setImportStatusExhausted(false);
+    if (isMockMode || !activeRunId) return;
+    const polling = startImportRunPolling({
+      fetchRun: (signal) => fetchImportRun(activeRunId, signal),
+      isTerminal: (run) => TERMINAL_RUN_STATUSES.has(run.status),
+      isTransient: (error) => error instanceof JobvisApiUnavailableError,
+      onRun: (run) => {
+        setLatestImportRun(run);
+        setErrorMessage(null);
+        if (run.status === "completed") {
+          invalidateJobvisApplications();
+        } else if (TERMINAL_RUN_STATUSES.has(run.status)) {
+          setErrorMessage(
+            run.errorCode
+              ? `메일 동기화를 완료하지 못했습니다. (${run.errorCode})`
+              : "메일 동기화를 완료하지 못했습니다.",
+          );
+        }
+      },
+      onError: (error) => reportError(error, "메일 동기화 상태를 확인하지 못했습니다."),
+      onExhausted: () => setImportStatusExhausted(true),
+    });
+    return () => polling.dispose();
+  }, [activeRunId, pollingAttempt, reportError]);
+
+  // 종료된 작업의 연결 정보도 화면·연결 변경 후 늦게 반영하지 않는다.
+  useEffect(() => {
+    if (isMockMode || !terminalRunId) return;
+    const controller = new AbortController();
+    void fetchMailConnections(controller.signal).then((connections) => {
+      if (controller.signal.aborted) return;
+      setMailConnection(connections.find((connection) => connection.id === connectionId) ?? null);
+    }).catch((error: unknown) => {
+      if (controller.signal.aborted) return;
+      reportError(error, "메일 연결 상태를 불러오지 못했습니다.");
+    });
+    return () => controller.abort();
+  }, [terminalRunId, connectionId, reportError]);
+
+  function retryImportStatus() {
+    if (!activeRunId || !importStatusExhausted) return;
+    setImportStatusExhausted(false);
+    setErrorMessage(null);
+    setPollingAttempt((attempt) => attempt + 1);
+  }
 
   async function connectNaver(accountEmail: string, appPassword: string) {
     setBusyAction("connect");
@@ -420,6 +440,8 @@ export function AccountSettingsProvider({ children }: { children: ReactNode }) {
       disconnectMail,
       errorMessage,
       latestImportRun,
+      importStatusExhausted,
+      retryImportStatus,
       loadStatus,
       mailConnection,
       reloadConnections,

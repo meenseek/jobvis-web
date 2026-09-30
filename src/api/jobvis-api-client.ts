@@ -90,5 +90,11 @@ export async function apiRequest<T>(
     throw new Error(await apiErrorMessage(response));
   }
   if (response.status === 204) return undefined as T;
-  return (await response.json()) as T;
+  return (await response.json().catch((error: unknown) => {
+    // 헤더 수신 이후 본문 스트림의 연결 오류도 일시적 장애로 처리한다.
+    if (error instanceof TypeError) {
+      throw new JobvisApiUnavailableError(error.message);
+    }
+    throw error;
+  })) as T;
 }
