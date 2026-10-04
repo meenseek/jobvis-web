@@ -647,7 +647,7 @@ test("uses real route navigation and shared application state", async () => {
   assert.match(styles, /@keyframes timeline-radar/);
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\)/);
   assert.doesNotMatch(styles, /\.timeline li:not\(:last-child\)::after/);
-  assert.match(packageJson, /"@measure-twice\/react": "\^0\.4\.3"/);
+  assert.match(packageJson, /"@measure-twice\/react": "\^0\.4\.4"/);
   assert.match(packageJson, /"next": "\^16\./);
   assert.match(packageJson, /"sass": "\^1\./);
   assert.match(
