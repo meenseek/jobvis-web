@@ -549,9 +549,7 @@ test("uses real route navigation and shared application state", async () => {
   assert.match(privacyPage, /AES-256-GCM/);
   assert.match(termsPage, /채용 결과를 보장하거나/);
   assert.match(googleAnalytics, /NEXT_PUBLIC_JOBVIS_GA_MEASUREMENT_ID/);
-  assert.match(googleAnalytics, /send_page_view: false/);
-  assert.match(googleAnalytics, /"event", "page_view"/);
-  assert.match(googleAnalytics, /page_path: pathname/);
+  assert.match(googleAnalytics, /trackPageView\(window, measurementId, pathname, window.location.origin\)/);
   assert.doesNotMatch(googleAnalytics, /searchParams/);
   assert.match(packageJson, /JOBVIS_GA_MEASUREMENT_ID is required/);
   assert.match(provider, /updateStatus/);

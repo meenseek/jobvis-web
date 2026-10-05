@@ -2,54 +2,39 @@
 
 import Script from "next/script";
 import { usePathname } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useSyncExternalStore } from "react";
+import { isAnalyticsOrigin, trackPageView } from "./google-analytics-runtime";
 
 const measurementId =
   process.env.NEXT_PUBLIC_JOBVIS_GA_MEASUREMENT_ID?.trim() ?? "";
-const isConfigured = /^G-[A-Z0-9]+$/.test(measurementId);
+const isConfigured = /^G-[A-Z0-9]{10}$/.test(measurementId);
+const siteOrigin = process.env.NEXT_PUBLIC_JOBVIS_WEB_ORIGIN?.trim() ?? "";
+const subscribeToOrigin = () => () => undefined;
 
 declare global {
   interface Window {
-    dataLayer?: unknown[][];
+    dataLayer?: unknown[];
     gtag?: (...args: unknown[]) => void;
-    jobvisGaInitialized?: boolean;
+    jobvisGaMeasurementId?: string;
     jobvisGaPagePath?: string;
   }
 }
 
 export function GoogleAnalytics() {
   const pathname = usePathname();
+  const enabled = useSyncExternalStore(
+    subscribeToOrigin,
+    () => isConfigured && isAnalyticsOrigin(window.location.origin, siteOrigin),
+    () => false,
+  );
 
   useEffect(() => {
-    if (!isConfigured) return;
+    if (!enabled) return;
 
-    window.dataLayer = window.dataLayer ?? [];
-    window.gtag =
-      window.gtag ??
-      ((...args: unknown[]) => {
-        window.dataLayer?.push(args);
-      });
+    trackPageView(window, measurementId, pathname, window.location.origin);
+  }, [enabled, pathname]);
 
-    if (!window.jobvisGaInitialized) {
-      window.gtag("js", new Date());
-      window.gtag("config", measurementId, {
-        allow_ad_personalization_signals: false,
-        allow_google_signals: false,
-        send_page_view: false,
-      });
-      window.jobvisGaInitialized = true;
-    }
-
-    if (window.jobvisGaPagePath === pathname) return;
-    window.jobvisGaPagePath = pathname;
-    window.gtag("event", "page_view", {
-      page_location: `${window.location.origin}${pathname}`,
-      page_path: pathname,
-      page_title: document.title,
-    });
-  }, [pathname]);
-
-  if (!isConfigured) return null;
+  if (!isConfigured || !enabled) return null;
 
   return (
     <>

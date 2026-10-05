@@ -125,11 +125,19 @@ Cloudflare 배포에는 다음 환경변수를 사용합니다.
 | `NEXT_PUBLIC_JOBVIS_API_MODE` | `api` |
 | `NEXT_PUBLIC_JOBVIS_GOOGLE_CLIENT_ID` | Google Web Client ID |
 | `NEXT_PUBLIC_JOBVIS_GA_MEASUREMENT_ID` | GA4 Web 데이터 스트림 측정 ID |
+| `NEXT_PUBLIC_JOBVIS_WEB_ORIGIN` | GA4 측정을 허용할 실제 Workers HTTPS origin |
 | `JOBVIS_WEB_ORIGIN` | 실제 Workers HTTPS origin |
 
 API 주소에는 `/api/v1`이나 마지막 `/`를 붙이지 않습니다. API의 CORS·OAuth redirect
 설정도 동일한 `JOBVIS_WEB_ORIGIN`을 사용합니다. VM용 Compose와 백업 절차는
 `jobvis-api/deploy/lab/README.md`가 소유합니다.
+
+GA4에는 화면 경로만 보내며 지원 상세의 식별자는 `/applications/:id`로 바꿉니다.
+쿼리, 이전 페이지 URL과 화면의 사용자 입력은 보내지 않습니다. 운영 웹 스트림의
+Enhanced Measurement를 끄고 수동 `page_view`만 사용합니다. 배포 후 해당 제품 소유
+Google 계정에서 스트림의 URL·측정 ID와 Realtime 수신을 확인합니다. 개발과 preview에는
+운영 측정 ID를 주입하지 않습니다. 측정 ID가 있더라도 브라우저 origin이
+`NEXT_PUBLIC_JOBVIS_WEB_ORIGIN`과 다르면 태그를 로드하지 않습니다.
 
 ```bash
 npm run test:cloudflare
