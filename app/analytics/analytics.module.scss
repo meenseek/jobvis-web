@@ -13,16 +13,6 @@
   margin-left: auto;
 }
 
-.analytics-range :global(.mt-select__label) {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-
 .summary-strip {
   min-width: 0;
   margin-bottom: var(--mt-space-8);

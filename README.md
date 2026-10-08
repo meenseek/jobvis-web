@@ -150,3 +150,8 @@ JOBVIS_GA_MEASUREMENT_ID=G-XXXXXXXXXX npm run deploy:cloudflare
 npm run lint
 npm test
 ```
+
+Measure Twice는 공개 컴포넌트 props와 지원되는 의미 기반 토큰으로 사용합니다.
+`npm run lint`는 공식 ESLint·Stylelint 설정으로 비공개 클래스와 미지원 토큰을 차단하고,
+일반 JSX `select` 대신 공개 `Select`를 사용하도록 검사합니다. 필드 내부의 여백이나
+라벨을 비공개 선택자로 덮어쓰지 않으며, 제품 배치는 앱 소유 클래스에서 조정합니다.

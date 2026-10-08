@@ -76,17 +76,6 @@
   gap: var(--mt-space-3);
 }
 
-.table-filters :global(.mt-text-field__label),
-.table-filters :global(.mt-select__label) {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-
 .table-wrap {
   overflow-x: auto;
 }

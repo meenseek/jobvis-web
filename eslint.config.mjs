@@ -6,6 +6,7 @@ import react from "eslint-plugin-react";
 import reactHooks from "eslint-plugin-react-hooks";
 import globals from "globals";
 import tseslint from "typescript-eslint";
+import measureTwice from "@measure-twice/react/eslint";
 
 const eslintConfig = defineConfig([
   globalIgnores([
@@ -22,7 +23,21 @@ const eslintConfig = defineConfig([
   reactHooks.configs.flat["recommended-latest"],
   jsxA11y.flatConfigs.recommended,
   next.configs["core-web-vitals"],
+  measureTwice.configs.recommended,
   {
+    rules: {
+      "react/forbid-elements": [
+        "error",
+        {
+          forbid: [
+            {
+              element: "select",
+              message: "공개 Measure Twice Select로 화살표 여백과 라벨을 유지합니다.",
+            },
+          ],
+        },
+      ],
+    },
     languageOptions: {
       globals: {
         ...globals.browser,

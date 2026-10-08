@@ -4,7 +4,7 @@
   color: var(--mt-color-text);
   font-size: var(--mt-font-size-18);
   font-weight: var(--mt-font-weight-semibold);
-  line-height: var(--mt-line-height-relaxed);
+  line-height: var(--mt-line-height-normal);
 }
 
 .home-assistant-note span {
@@ -76,7 +76,7 @@
 }
 
 .home-upcoming-section {
-  margin-bottom: var(--mt-space-11);
+  margin-bottom: calc(var(--mt-space-10) + var(--mt-space-1));
 }
 
 .home-section .priority-list,
@@ -254,7 +254,7 @@
   overflow: hidden;
   color: var(--mt-color-text);
   font-size: var(--mt-font-size-12);
-  font-weight: var(--mt-font-weight-normal);
+  font-weight: var(--mt-font-weight-regular);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -278,7 +278,7 @@
 .support-date strong {
   color: var(--mt-color-text);
   font-size: var(--mt-font-size-12);
-  font-weight: var(--mt-font-weight-normal);
+  font-weight: var(--mt-font-weight-regular);
   white-space: nowrap;
 }
 
@@ -348,8 +348,7 @@
     text-align: left;
   }
 
-  .review-item :global(.mt-button),
-  .priority-item :global(.mt-button),
+  .priority-action,
   .priority-link {
     grid-column: 2;
     justify-self: start;

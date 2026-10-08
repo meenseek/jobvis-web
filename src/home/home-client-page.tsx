@@ -197,6 +197,7 @@ export default function HomeClientPage({
                 </div>
                 {item.canComplete ? (
                   <Button
+                    className={styles["priority-action"]}
                     size="sm"
                     tone="neutral"
                     variant="outline"

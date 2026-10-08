@@ -306,7 +306,6 @@ export default function ApplicationDetailPage() {
             <dd>
               <Select
                 label="진행 상태"
-                wrapperClassName={styles["summary-select"]}
                 value={getApplicationProgressStatus(selectedApplication)}
                 onChange={(event) =>
                   updateProgressStatus(

@@ -294,7 +294,7 @@
     justify-content: flex-start;
   }
 
-  .calendar-actions :global(.mt-button) {
+  .calendar-actions > * {
     min-width: 0;
   }
 

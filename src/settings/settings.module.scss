@@ -96,7 +96,7 @@
 
 .settings-permission-summary strong {
   color: var(--mt-color-text);
-  font-size: var(--mt-font-size-13);
+  font-size: var(--jv-font-size-13);
 }
 
 .settings-permission-list {
@@ -142,7 +142,7 @@
   }
 
   .settings-row-actions-sync,
-  .settings-row-actions :global(.mt-button) {
+  .settings-row-actions > * {
     width: 100%;
   }
 

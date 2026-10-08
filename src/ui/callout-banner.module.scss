@@ -62,8 +62,7 @@
     flex-direction: column;
   }
 
-  .actions :global(.mt-button),
-  .actions :global(.primary-action-link) {
+  .actions > * {
     width: 100%;
   }
 }
